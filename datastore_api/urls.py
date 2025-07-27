@@ -1,12 +1,11 @@
-from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from django.urls import path, include 
 from . import views
 
 router = DefaultRouter()
+router.register(r"datastores", views.DatastoreViewSet)
 
 urlpatterns = [
-    path("", include(router.urls)),
-    
+    path("", include(router.urls))
 ]
 
-app_name = "datastore_api"
