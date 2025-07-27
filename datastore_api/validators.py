@@ -42,7 +42,7 @@ class DatastoreValidator:
                 f"Port must be between 1 and 65535, got port {port}"
             )
         
-    classmethod
+    @classmethod
     def validate_performance_metrics(cls, avg_response_time, storage_capacity_gb, max_connections):
         if avg_response_time is not None and avg_response_time < 0:
             raise ValidationError("Average Response TIme must be positive.")

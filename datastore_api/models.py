@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from cryptography.fernet import Fernet
 from django.conf import settings
 import base64
-from validators import DatastoreValidator
+from .validators import DatastoreValidator
 
 class DataStoreManager(models.Manager):
     def active(self):
@@ -90,7 +90,7 @@ class Datastore(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.name ({self.get_type_display()} - {self.get_system_display()})}"
+        return f"{self.name} ({self.get_type_display()} - {self.get_system_display()})"
     
     def clean(self):
         super().clean()
@@ -142,6 +142,18 @@ class Datastore(models.Model):
             return f.decrypt(encrypted_password).decode()
         except Exception as e:
             raise ValueError(f"Failed to decrypt password: {e}")
+    
+    def _is_password_encrypted(self):
+        if not self.password:
+            return False
+        try:
+            # try to decode as base64
+            base64.b64decode(self.password.encode())
+            return True
+        except Exception:
+            return False
+    
+
         
     def get_masked_connection_info(self):
         return {
