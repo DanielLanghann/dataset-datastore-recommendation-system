@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 from django.conf import settings
 import base64
 
-class DatasetQueries(models.Model):
+class DatasetQueriesModel(models.Model):
     """
     We store query examples in this model.
     """
