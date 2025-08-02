@@ -1,11 +1,8 @@
 from django.db import models
 
 from django.db import models
-from django.core.validators import MinValueValidator, MaxValueValidator
-from django.core.exceptions import ValidationError
-from cryptography.fernet import Fernet
+from django.core.validators import MinValueValidator
 from django.conf import settings
-import base64
 
 class DatasetQueriesModel(models.Model):
     """

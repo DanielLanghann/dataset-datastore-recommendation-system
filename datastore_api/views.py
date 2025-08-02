@@ -1,12 +1,14 @@
-from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework import viewsets, status, filters
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
 from django.db import transaction
+from django_filters.rest_framework import DjangoFilterBackend
 from django.core.exceptions import ValidationError
 import time
 import socket
 from contextlib import closing
+from rest_framework.pagination import PageNumberPagination
 
 from .models import Datastore
 from .serializers import (
@@ -20,11 +22,25 @@ from .serializers import (
     DatastoreMinimalSerializer
 )
 
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 200
+
 
 class DatastoreViewSet(viewsets.ModelViewSet):
-    # CRUD
+    # CRUD operations
     queryset = Datastore.objects.all()
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+
+    # Filtering options
+    filterset_fields = ['type', 'system', 'description', 'server', 'is_active', 
+                        'max_connections', 'avg_response_time_ms', 'storage_capacity_gb']
+    search_fields = ["name", "type", "system"]
+    ordering_fields =  ['created_at', 'name', 'is_active', 'avg_response_time_ms', 'storage_capacity_gb']
+    ordering = ["id"]
     
     def get_serializer_class(self):
         if self.action == 'list':
