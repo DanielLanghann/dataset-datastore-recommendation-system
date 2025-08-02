@@ -60,18 +60,27 @@ TEMPLATES = [
 WSGI_APPLICATION = 'ddrs_api.wsgi.application'
 
 
- 
+# Database configuration with support for both PostgreSQL and SQLite
+db_engine = config('DB_ENGINE', default='postgresql')
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='ddrs_db'),
-        'USER': config('DB_USER', default='ddrs_user'),
-        'PASSWORD': config('DB_PASSWORD', default='ddrs_password'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
+if db_engine == 'sqlite3':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / config('DB_NAME', default='db.sqlite3'),
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': config('DB_NAME', default='ddrs_db'),
+            'USER': config('DB_USER', default='ddrs_user'),
+            'PASSWORD': config('DB_PASSWORD', default='ddrs_password'),
+            'HOST': config('DB_HOST', default='localhost'),
+            'PORT': config('DB_PORT', default='5432'),
+        }
+    }
 
 
 # Password validation
