@@ -58,8 +58,8 @@ WSGI_APPLICATION = "ddrs_api.wsgi.application"
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='myapp_db'),
-        'USER': config('DB_USER', default='postgres'),
+        'NAME': config('DB_NAME', default='ddrs_db'),
+        'USER': config('DB_USER', default='ddrs_user'),
         'PASSWORD': config('DB_PASSWORD'),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432', cast=int),
