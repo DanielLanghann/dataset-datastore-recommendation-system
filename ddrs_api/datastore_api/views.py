@@ -1,5 +1,5 @@
 from rest_framework import viewsets, status, filters
-from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db import transaction
@@ -25,7 +25,7 @@ class StandardResultsSetPagination(PageNumberPagination):
 
 class DatastoreViewSet(viewsets.ModelViewSet):
     queryset = Datastore.objects.all()
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAuthenticated]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
 
