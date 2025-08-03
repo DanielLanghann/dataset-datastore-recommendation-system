@@ -4,6 +4,8 @@ from . import views
 
 router = DefaultRouter()
 router.register(r"datasets", views.DatasetViewSet)
+router.register(r'queries', views.DatasetQueriesViewSet)
+router.register(r'relationships', views.DatasetRelationshipViewSet)
 
 urlpatterns = [
     path("", include(router.urls))
