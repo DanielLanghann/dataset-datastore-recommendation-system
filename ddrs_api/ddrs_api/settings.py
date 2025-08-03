@@ -4,12 +4,13 @@ from decouple import config, Csv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-SECRET_KEY = config("SECRET_KEY", "django-insecure-zqm9u&c(tt-7q73v##v0q3w#kvcp(60odzn=@&di-szx+4trlf") 
+SECRET_KEY = config(
+    "SECRET_KEY", "django-insecure-zqm9u&c(tt-7q73v##v0q3w#kvcp(60odzn=@&di-szx+4trlf"
+)
 
 DEBUG = config("DEBUG", default=False, cast=bool)
 
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
-
 
 
 # Application definition
@@ -21,20 +22,20 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    'rest_framework',
-    'rest_framework.authtoken',  
+    "rest_framework",
+    "rest_framework.authtoken",
     "datastore_api",
     "authentication",
-    "dataset_api"
+    "dataset_api",
 ]
 
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',  # keep for admin interface
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+        "rest_framework.authentication.SessionAuthentication",  # keep for admin interface
     ],
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
     ],
 }
 
@@ -71,16 +72,16 @@ WSGI_APPLICATION = "ddrs_api.wsgi.application"
 # Database
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME', default='ddrs_db'),
-        'USER': config('DB_USER', default='ddrs_user'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432', cast=int),
-        'OPTIONS': {
-            'connect_timeout': config('DB_CONNECT_TIMEOUT', default=10, cast=int),
-        }
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": config("DB_NAME", default="ddrs_db"),
+        "USER": config("DB_USER", default="ddrs_user"),
+        "PASSWORD": config("DB_PASSWORD"),
+        "HOST": config("DB_HOST", default="localhost"),
+        "PORT": config("DB_PORT", default="5432", cast=int),
+        "OPTIONS": {
+            "connect_timeout": config("DB_CONNECT_TIMEOUT", default=10, cast=int),
+        },
     }
 }
 
@@ -122,26 +123,26 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Datastore encryption key 
+# Datastore encryption key
 
-DATASTORE_ENCRYPTION_KEY = config('DATASTORE_ENCRYPTION_KEY')
+DATASTORE_ENCRYPTION_KEY = config("DATASTORE_ENCRYPTION_KEY")
 
 # Logging
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'file': {
-            'level': 'ERROR',
-            'class': 'logging.FileHandler',
-            'filename': 'datastore_errors.log',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "file": {
+            "level": "ERROR",
+            "class": "logging.FileHandler",
+            "filename": "datastore_errors.log",
         },
     },
-    'loggers': {
-        'datastore_api.views': { 
-            'handlers': ['file'],
-            'level': 'ERROR',
-            'propagate': True,
+    "loggers": {
+        "datastore_api.views": {
+            "handlers": ["file"],
+            "level": "ERROR",
+            "propagate": True,
         },
     },
 }
