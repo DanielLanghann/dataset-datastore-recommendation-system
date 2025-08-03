@@ -24,8 +24,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',  
     "datastore_api",
-    "dataset_api",
-    "authentication"
+    "authentication",
+    "dataset_api"
 ]
 
 REST_FRAMEWORK = {
