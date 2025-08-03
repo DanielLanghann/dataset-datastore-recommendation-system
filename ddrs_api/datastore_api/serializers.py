@@ -37,6 +37,7 @@ class DatastoreDetailSerializer(serializers.ModelSerializer):
         return obj.get_masked_connection_info()
 
 class DatastoreCreateUpdateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
     password_confirm = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     def validate(self, data):
@@ -51,6 +52,22 @@ class DatastoreCreateUpdateSerializer(serializers.ModelSerializer):
         data.pop("password_confirm", None)
         return data
     
+    def create(self, validated_data):
+        password = validated_data.pop('password', None)
+        instance = super().create(validated_data)
+        if password:
+            instance.set_password(password)
+            instance.save()
+        return instance
+    
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        instance = super().update(instance, validated_data)
+        if password:
+            instance.set_password(password)
+            instance.save()
+        return instance
+    
     class Meta:
         model = Datastore
         fields = [
@@ -59,9 +76,6 @@ class DatastoreCreateUpdateSerializer(serializers.ModelSerializer):
             'is_active', 'max_connections', 'avg_response_time_ms', 
             'storage_capacity_gb'
         ]
-        extra_kwargs = {
-            'password': {'write_only': True},
-        }
 
 class DatastorePerformanceSerializer(serializers.ModelSerializer):
     # get datastore performance metriks

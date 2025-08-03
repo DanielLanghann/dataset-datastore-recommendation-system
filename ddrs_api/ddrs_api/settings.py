@@ -21,7 +21,10 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "datastore_api"
+    'rest_framework',
+    'rest_framework.authtoken',  
+    "datastore_api",
+    "authentication"
 ]
 
 REST_FRAMEWORK = {
@@ -117,6 +120,10 @@ STATIC_URL = "static/"
 # Default primary key field type
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Datastore encryption key 
+
+DATASTORE_ENCRYPTION_KEY = config('DATASTORE_ENCRYPTION_KEY')
 
 # Logging
 LOGGING = {
