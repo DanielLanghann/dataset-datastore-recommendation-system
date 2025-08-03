@@ -24,13 +24,14 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',  
     "datastore_api",
+    "dataset_api",
     "authentication"
 ]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',  # keep for admin
+        'rest_framework.authentication.SessionAuthentication',  # keep for admin interface
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
