@@ -75,8 +75,12 @@ class DatastoreViewSet(viewsets.ModelViewSet):
         try:
             with transaction.atomic():
                 instance = serializer.save()
+            
             headers = self.get_success_headers(serializer.data)
             response_serializer = DatastoreDetailSerializer(instance)
+            
+            logger.info(f"Datastore '{instance.name}' created successfully with ID {instance.id}")
+            
             return Response(
                 response_serializer.data,
                 status=status.HTTP_201_CREATED,
@@ -162,6 +166,62 @@ class DatastoreViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a datastore with confirmation message and proper error handling.
+        """
+        try:
+            instance = self.get_object()
+            datastore_name = instance.name
+            datastore_id = instance.id
+            datastore_type = getattr(instance, 'type', 'unknown')
+            
+            # Check if datastore has any dependencies or is currently in use
+            # (Add any custom business logic checks here if needed)
+            
+            with transaction.atomic():
+                self.perform_destroy(instance)
+            
+            logger.info(f"Datastore '{datastore_name}' (ID: {datastore_id}, Type: {datastore_type}) deleted successfully")
+            
+            return Response(
+                {
+                    'message': f"Datastore '{datastore_name}' deleted successfully",
+                    'deleted_datastore': {
+                        'id': datastore_id,
+                        'name': datastore_name,
+                        'type': datastore_type
+                    }
+                },
+                status=status.HTTP_204_NO_CONTENT
+            )
+        
+        except ValidationError as e:
+            logger.error(f"Validation error during datastore deletion: {str(e)}")
+            return Response(
+                {'error': f'Cannot delete datastore: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        except (ValueError, ImproperlyConfigured) as e:
+            logger.error(f"Configuration error during datastore deletion: {str(e)}")
+            if "decrypt" in str(e).lower():
+                return Response(
+                    {'error': 'Failed to access datastore data during deletion. Please contact administrator.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            return Response(
+                {'error': 'Configuration error during deletion. Please contact administrator.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        except Exception as e:
+            logger.error(f"Unexpected error during datastore deletion: {str(e)}")
+            return Response(
+                {'error': 'An unexpected error occurred while deleting the datastore.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+            
         
     
     @action(detail=False, methods=['get'])
