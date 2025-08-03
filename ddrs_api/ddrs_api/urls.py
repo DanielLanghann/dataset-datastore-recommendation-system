@@ -1,5 +1,3 @@
-
-
 from django.contrib import admin
 from django.urls import path, include
 
@@ -9,5 +7,3 @@ urlpatterns = [
     path("api/", include("datastore_api.urls")),
     path("api/", include("dataset_api.urls")),
 ]
-
-

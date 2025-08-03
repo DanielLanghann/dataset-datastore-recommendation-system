@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import DatasetBaseModel, DatasetQueriesModel, DatasetRelationshipModel
 
+
 class DatasetBaseSerializer(serializers.ModelSerializer):
     """
     Serializer class for handling the base dataset model.
@@ -9,12 +10,23 @@ class DatasetBaseSerializer(serializers.ModelSerializer):
     class Meta:
         model = DatasetBaseModel
         fields = [
-            'id', 'created_at', 'updated_at', 'name', 'short_description',
-            'current_datastore', 'data_structure', 'growth_rate',
-            'access_patterns', 'query_complexity', 'properties', 'sample_data',
-            'estimated_size_gb', 'avg_query_time_ms', 'queries_per_day'
+            "id",
+            "created_at",
+            "updated_at",
+            "name",
+            "short_description",
+            "current_datastore",
+            "data_structure",
+            "growth_rate",
+            "access_patterns",
+            "query_complexity",
+            "properties",
+            "sample_data",
+            "estimated_size_gb",
+            "avg_query_time_ms",
+            "queries_per_day",
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ["id", "created_at", "updated_at"]
 
     def validate_properties(self, value):
         """
@@ -36,21 +48,40 @@ class DatasetBaseSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Each sample data must be a list")
         return value
 
+
 class DatasetRelationshipSerializer(serializers.ModelSerializer):
     """
     Serializer class for handling dataset relationships.
     """
-    from_dataset_name = serializers.CharField(source="from_dataset.name", read_only=True)
+
+    from_dataset_name = serializers.CharField(
+        source="from_dataset.name", read_only=True
+    )
     to_dataset_name = serializers.CharField(source="to_dataset.name", read_only=True)
 
     class Meta:
         model = DatasetRelationshipModel
         fields = [
-            'id', 'created_at', 'updated_at', 'from_dataset', 'to_dataset',
-            'from_dataset_name', 'to_dataset_name', 'relationship_type',
-            'strength', 'description', 'is_active'
+            "id",
+            "created_at",
+            "updated_at",
+            "from_dataset",
+            "to_dataset",
+            "from_dataset_name",
+            "to_dataset_name",
+            "relationship_type",
+            "strength",
+            "description",
+            "is_active",
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'from_dataset_name', 'to_dataset_name']
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+            "from_dataset_name",
+            "to_dataset_name",
+        ]
+
 
 class DatasetQueriesSerializer(serializers.ModelSerializer):
     """
@@ -60,24 +91,37 @@ class DatasetQueriesSerializer(serializers.ModelSerializer):
     class Meta:
         model = DatasetQueriesModel
         fields = [
-            "id", "created_at", "updated_at", "dataset", "name",
-            "query_text", "query_type", "frequency", "avg_execution_time_ms", "description"
+            "id",
+            "created_at",
+            "updated_at",
+            "dataset",
+            "name",
+            "query_text",
+            "query_type",
+            "frequency",
+            "avg_execution_time_ms",
+            "description",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
 
 class DatasetDetailSerializer(DatasetBaseSerializer):
     """
     Serializer class for detailed dataset information.
     Extends the DatasetBaseSerializer to include relationships and queries associated with the dataset.
     """
+
     relationships_from = DatasetRelationshipSerializer(many=True, read_only=True)
     relationships_to = DatasetRelationshipSerializer(many=True, read_only=True)
     queries = DatasetQueriesSerializer(many=True, read_only=True)
 
     class Meta(DatasetBaseSerializer.Meta):
         fields = DatasetBaseSerializer.Meta.fields + [
-            'relationships_from', 'relationships_to', 'queries'
+            "relationships_from",
+            "relationships_to",
+            "queries",
         ]
+
 
 class DatasetCreateSerializer(DatasetBaseSerializer):
     """
@@ -85,6 +129,7 @@ class DatasetCreateSerializer(DatasetBaseSerializer):
     Extends the DatasetBaseSerializer to include relationships and queries that can be created
     along with the dataset.
     """
+
     relationships = DatasetRelationshipSerializer(many=True, required=False)
     queries = DatasetQueriesSerializer(many=True, required=False)
 
@@ -113,26 +158,43 @@ class DatasetCreateSerializer(DatasetBaseSerializer):
 
         return dataset
 
+
 class DatasetListSerializer(serializers.ModelSerializer):
     """
     Serializer class for listing datasets.
     Includes fields for basic dataset information along with counts of relationships and queries.
     """
-    datastore_name = serializers.CharField(source="current_datastore.name", read_only=True)
+
+    datastore_name = serializers.CharField(
+        source="current_datastore.name", read_only=True
+    )
     relationships_count = serializers.SerializerMethodField()
     queries_count = serializers.SerializerMethodField()
 
     class Meta:
         model = DatasetBaseModel
         fields = [
-            'id', 'created_at', 'updated_at', 'name', 'short_description',
-            'current_datastore', 'datastore_name', 'data_structure',
-            'growth_rate', 'access_patterns', 'query_complexity',
-            'estimated_size_gb', 'relationships_count', 'queries_count'
+            "id",
+            "created_at",
+            "updated_at",
+            "name",
+            "short_description",
+            "current_datastore",
+            "datastore_name",
+            "data_structure",
+            "growth_rate",
+            "access_patterns",
+            "query_complexity",
+            "estimated_size_gb",
+            "relationships_count",
+            "queries_count",
         ]
 
     def get_relationships_count(self, obj):
-        return obj.relationships_from.filter(is_active=True).count() + obj.relationships_to.filter(is_active=True).count()
+        return (
+            obj.relationships_from.filter(is_active=True).count()
+            + obj.relationships_to.filter(is_active=True).count()
+        )
 
     def get_queries_count(self, obj):
         return obj.queries.count()
