@@ -51,7 +51,6 @@ class Datastore(models.Model):
         help_text="Port number for database connection"
     )
     username = models.CharField(max_length=255, blank=True, null=True, help_text="Database username for authentication")
-    password = models.TextField(blank=True, null=True, help_text="Database password for authentication")
     _encrypted_password = models.TextField(blank=True, null=True, help_text="Encrypted database password")
     connection_string = models.TextField(blank=True, null=True, help_text="Alternative to individual connection parameters")
 
@@ -127,6 +126,29 @@ class Datastore(models.Model):
     
     def has_password(self):
         return bool(self._encrypted_password)
+    
+    def get_masked_connection_info(self):
+        # return connection info with masked data
+        info = {
+            "server": self.server,
+            "port": self.port,
+            "username": self.username,
+            "has_password": self.has_password(),
+            "connection_string_provided": bool(self.connection_string)
+        }
+        return info
+    
+    @property
+    def characteristics(self):
+        return {
+            "type": self.get_type_display(), # will be added by Django thx to the choices prop
+            "system": self.get_system_display(), # same
+            "max_connections": self.max_connections,
+            "avg_response_time": self.avg_response_time_ms,
+            "storage_capacity_gb": self.storage_capacity_gb, 
+        }
+
+
     
     def __str__(self):
         return f"{self.name} ({self.get_type_display()} - {self.get_system_display()})"
