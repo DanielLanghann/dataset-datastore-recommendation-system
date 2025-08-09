@@ -5,5 +5,6 @@ from . import views
 router = DefaultRouter()
 router.register(r"requests", views.RequestViewSet)
 router.register(r"ollama", views.OllamaValidationViewSet, basename="ollama")
+router.register((r"responses", views.ResponseViewSet))
 
 urlpatterns = [path("", include(router.urls))]
