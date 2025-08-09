@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "datastore_api",
     "authentication",
     "dataset_api",
+    "matching_engine",
 ]
 
 REST_FRAMEWORK = {
@@ -146,3 +147,11 @@ LOGGING = {
         },
     },
 }
+
+# Ollama
+OLLAMA_API_URL = config("OLLAMA_API_URL", default="http://localhost:11434")
+VALIDATE_OLLAMA_MODELS = config("VALIDATE_OLLAMA_MODELS", default=True, cast=bool)
+# fallback models when Ollama is unreachable (acts as safety net)
+FALLBACK_OLLAMA_MODELS = config(
+    "FALLBACK_OLLAMA_MODELS", default="qwen3:8b", cast=Csv()
+)
