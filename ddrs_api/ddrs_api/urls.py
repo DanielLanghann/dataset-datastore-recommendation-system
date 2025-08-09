@@ -6,4 +6,5 @@ urlpatterns = [
     path("api/auth/", include("authentication.urls")),
     path("api/", include("datastore_api.urls")),
     path("api/", include("dataset_api.urls")),
+    path("api/", include("matching_engine.urls")),
 ]
