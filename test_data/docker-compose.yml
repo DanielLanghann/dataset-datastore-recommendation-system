@@ -18,7 +18,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d
     networks:
-      - postgres_network
+      - app_network
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -26,20 +26,64 @@ services:
     restart: always
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD} 
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
     ports:
       - "5051:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     networks:
-      - postgres_network
+      - app_network
     depends_on:
       - postgres
+
+  # Neo4j Graph Database
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: test_data_neo4j
+    restart: always
+    environment:
+      # Authentication
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      
+      # Memory settings (adjust based on your needs)
+      NEO4J_dbms_memory_heap_initial__size: 512M
+      NEO4J_dbms_memory_heap_max__size: 1G
+      NEO4J_dbms_memory_pagecache_size: 512M
+      
+      # Security settings
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_security_procedures_allowlist: apoc.*
+      
+      # APOC plugin (Advanced Procedures On Cypher)
+      NEO4JLABS_PLUGINS: '["apoc"]'
+      
+      # Accept license
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: yes
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD} 'RETURN 1'"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    networks:
+      - app_network
 
 volumes:
   postgres_data:
   pgadmin_data:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_import:
+  neo4j_plugins:
 
 networks:
-  postgres_network:
+  app_network:
     driver: bridge
