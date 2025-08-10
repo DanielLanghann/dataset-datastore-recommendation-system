@@ -2,7 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from ..services.ollama_model_validator import OllamaModelValidator
+from ..services.ollama_model_validator_service import OllamaModelValidator
 
 
 class OllamaValidationViewSet(viewsets.ViewSet):

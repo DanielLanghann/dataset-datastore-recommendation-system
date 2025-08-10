@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.conf import settings
 from ..models import MatchingRequests
-from ..services.ollama_model_validator import OllamaModelValidator
+from ..services.ollama_model_validator_service import OllamaModelValidator
 
 
 class RequestSerializer(serializers.ModelSerializer):
