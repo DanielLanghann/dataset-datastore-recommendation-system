@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from matching_engine.services.ollama_model_validator import OllamaModelValidator
+from ddrs_api.matching_engine.services.ollama_model_validator_service import OllamaModelValidator
 
 
 class Command(BaseCommand):

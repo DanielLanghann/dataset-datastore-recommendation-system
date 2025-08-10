@@ -1,3 +1,4 @@
-from .ollama_model_validator import OllamaModelValidator
+from .ollama_model_validator_service import OllamaModelValidator
+from .core_matching_service import CoreMatchingService
 
-__all__ = ["OllamaModelValidator"]
+__all__ = ["OllamaModelValidator", "CoreMatchingService"]
