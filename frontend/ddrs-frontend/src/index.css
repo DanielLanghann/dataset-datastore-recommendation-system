@@ -1,3 +1,18 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@font-face {
+  font-family: "MarkPro";
+  src:
+    url("/public/fonts/MarkPro.woff2") format("woff2"),
+    url("/public/fonts/MarkPro.woff") format("woff"),
+    url("/public/fonts/MarkPro.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+}
+
+body {
+  @apply bg-gray-900 text-white;
+  font-family: "MarkPro", sans-serif;
+}
