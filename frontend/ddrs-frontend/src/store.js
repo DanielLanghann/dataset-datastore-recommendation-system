@@ -1,5 +1,11 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { userLoginReducer } from './reducers/userReducers';
+import { 
+  datastoreListReducer, 
+  datastoreCreateReducer, 
+  datastoreUpdateReducer, 
+  datastoreDeleteReducer 
+} from './reducers/datastoreReducers';
 
 // Get user info from localStorage if available
 const userInfoFromStorage = localStorage.getItem('userInfo')
@@ -13,6 +19,10 @@ const preloadedState = {
 const store = configureStore({
   reducer: {
     userLogin: userLoginReducer,
+    datastoreList: datastoreListReducer,
+    datastoreCreate: datastoreCreateReducer,
+    datastoreUpdate: datastoreUpdateReducer,
+    datastoreDelete: datastoreDeleteReducer,
   },
   preloadedState,
   middleware: (getDefaultMiddleware) =>
