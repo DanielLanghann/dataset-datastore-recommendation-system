@@ -3,6 +3,7 @@ import React from 'react';
 const CustomInput = ({
   label,
   id,
+  name,
   type = 'text',
   placeholder,
   value,
@@ -20,6 +21,7 @@ const CustomInput = ({
       </label>
       <input
         id={id}
+        name={name}
         type={type}
         placeholder={placeholder}
         value={value}
