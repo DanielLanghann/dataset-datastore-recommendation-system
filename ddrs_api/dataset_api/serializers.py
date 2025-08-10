@@ -123,6 +123,24 @@ class DatasetDetailSerializer(DatasetBaseSerializer):
         ]
 
 
+class DatasetCreateQuerySerializer(serializers.ModelSerializer):
+    """
+    Serializer for queries during dataset creation.
+    Excludes the dataset field since it will be set automatically.
+    """
+    
+    class Meta:
+        model = DatasetQueriesModel
+        fields = [
+            "name",
+            "query_text", 
+            "query_type",
+            "frequency",
+            "avg_execution_time_ms",
+            "description",
+        ]
+
+
 class DatasetCreateSerializer(DatasetBaseSerializer):
     """
     Serializer class for creating datasets.
@@ -131,7 +149,7 @@ class DatasetCreateSerializer(DatasetBaseSerializer):
     """
 
     relationships = DatasetRelationshipSerializer(many=True, required=False)
-    queries = DatasetQueriesSerializer(many=True, required=False)
+    queries = DatasetCreateQuerySerializer(many=True, required=False)
 
     class Meta(DatasetBaseSerializer.Meta):
         fields = DatasetBaseSerializer.Meta.fields + ["relationships", "queries"]

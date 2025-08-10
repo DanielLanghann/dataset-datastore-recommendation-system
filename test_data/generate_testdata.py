@@ -60,90 +60,7 @@ class TestDataGenerator:
         """Create database connection"""
         try:
             self.connection = psycopg2.connect(**self.db_config)
-            print(f"🚀 Starting test data generation...")
-    print(f"📊 Rows per table: {args.rows:,}")
-    
-    if args.rows > 100000:
-        print(f"⚠️  Large dataset detected ({args.rows:,} rows)")
-        print("💡 Tips for large datasets:")
-        print("   - This may take several minutes")
-        print("   - Consider using --skip-duplicates for retries")
-        print("   - Database will be processed in batches")
-        
-        response = input("Continue? (y/N): ").strip().lower()
-        if response not in ['y', 'yes']:
-            print("Operation cancelled.")
-            return
-    
-    # Load database configuration
-    db_config = load_environment()
-    
-    # Initialize generator
-    generator = TestDataGenerator(db_config)
-    
-    if not generator.connect():
-        sys.exit(1)
-    
-    try:
-        # Load existing data for foreign key validation
-        if not generator.load_existing_data():
-            sys.exit(1)
-        
-        # Handle association updates if requested
-        if args.update_associations:
-            print("🔄 Updating product associations from order data...")
-            generator.update_product_associations_from_orders()
-            print("🎉 Association update completed!")
-            return
-        
-        # Determine which tables to process
-        if args.all:
-            tables = ['categories', 'customers', 'products', 'orders', 'order_items', 'product_associations']
-        else:
-            tables = [table.lower() for table in args.tables]
-        
-        print(f"📋 Processing tables: {', '.join(tables)}")
-        
-        # Process tables in dependency order
-        table_order = ['categories', 'customers', 'products', 'orders', 'order_items', 'product_associations']
-        ordered_tables = [table for table in table_order if table in tables]
-        
-        success_count = 0
-        total_start_time = datetime.now()
-        
-        for table in ordered_tables:
-            table_start_time = datetime.now()
-            print(f"\n📦 Processing {table}...")
-            
-            if generator.generate_table_data(table, args.rows):
-                success_count += 1
-                # Refresh existing data after each table for foreign key dependencies
-                generator.refresh_existing_data()
-                
-                table_duration = datetime.now() - table_start_time
-                print(f"✅ {table} completed in {table_duration.total_seconds():.1f}s")
-            else:
-                print(f"⚠️  Failed to generate data for {table}, continuing with next table...")
-        
-        total_duration = datetime.now() - total_start_time
-        
-        print(f"\n🎉 Test data generation completed!")
-        print(f"✅ Successfully processed {success_count}/{len(ordered_tables)} tables")
-        print(f"⏱️  Total time: {total_duration.total_seconds():.1f}s")
-        
-        if args.rows > 10000:
-            # Show final statistics for large datasets
-            generator.show_final_statistics()
-        
-    except KeyboardInterrupt:
-        print("\n⏹️  Generation interrupted by user")
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-    finally:
-        generator.disconnect()
-
-if __name__ == "__main__":
-    main()✅ Connected to database: {self.db_config['host']}:{self.db_config['port']}")
+            print(f"✅ Connected to database: {self.db_config['host']}:{self.db_config['port']}")
             return True
         except psycopg2.Error as e:
             print(f"❌ Database connection failed: {e}")
@@ -773,6 +690,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"⚠️  Could not generate statistics: {e}")
 
+
 def load_environment():
     """Load environment variables"""
     return {
@@ -783,6 +701,7 @@ def load_environment():
         'port': int(config('DB_PORT', 5433)),
         'connect_timeout': int(config('DB_CONNECT_TIMEOUT', 10))
     }
+
 
 def main():
     """Main function"""
@@ -800,3 +719,88 @@ def main():
     
     args = parser.parse_args()
     
+    print(f"🚀 Starting test data generation...")
+    print(f"📊 Rows per table: {args.rows:,}")
+    
+    if args.rows > 100000:
+        print(f"⚠️  Large dataset detected ({args.rows:,} rows)")
+        print("💡 Tips for large datasets:")
+        print("   - This may take several minutes")
+        print("   - Consider using --skip-duplicates for retries")
+        print("   - Database will be processed in batches")
+        
+        response = input("Continue? (y/N): ").strip().lower()
+        if response not in ['y', 'yes']:
+            print("Operation cancelled.")
+            return
+    
+    # Load database configuration
+    db_config = load_environment()
+    
+    # Initialize generator
+    generator = TestDataGenerator(db_config)
+    
+    if not generator.connect():
+        sys.exit(1)
+    
+    try:
+        # Load existing data for foreign key validation
+        if not generator.load_existing_data():
+            sys.exit(1)
+        
+        # Handle association updates if requested
+        if args.update_associations:
+            print("🔄 Updating product associations from order data...")
+            generator.update_product_associations_from_orders()
+            print("🎉 Association update completed!")
+            return
+        
+        # Determine which tables to process
+        if args.all:
+            tables = ['categories', 'customers', 'products', 'orders', 'order_items', 'product_associations']
+        else:
+            tables = [table.lower() for table in args.tables]
+        
+        print(f"📋 Processing tables: {', '.join(tables)}")
+        
+        # Process tables in dependency order
+        table_order = ['categories', 'customers', 'products', 'orders', 'order_items', 'product_associations']
+        ordered_tables = [table for table in table_order if table in tables]
+        
+        success_count = 0
+        total_start_time = datetime.now()
+        
+        for table in ordered_tables:
+            table_start_time = datetime.now()
+            print(f"\n📦 Processing {table}...")
+            
+            if generator.generate_table_data(table, args.rows):
+                success_count += 1
+                # Refresh existing data after each table for foreign key dependencies
+                generator.refresh_existing_data()
+                
+                table_duration = datetime.now() - table_start_time
+                print(f"✅ {table} completed in {table_duration.total_seconds():.1f}s")
+            else:
+                print(f"⚠️  Failed to generate data for {table}, continuing with next table...")
+        
+        total_duration = datetime.now() - total_start_time
+        
+        print(f"\n🎉 Test data generation completed!")
+        print(f"✅ Successfully processed {success_count}/{len(ordered_tables)} tables")
+        print(f"⏱️  Total time: {total_duration.total_seconds():.1f}s")
+        
+        if args.rows > 10000:
+            # Show final statistics for large datasets
+            generator.show_final_statistics()
+        
+    except KeyboardInterrupt:
+        print("\n⏹️  Generation interrupted by user")
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+    finally:
+        generator.disconnect()
+
+
+if __name__ == "__main__":
+    main()

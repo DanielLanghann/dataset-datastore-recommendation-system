@@ -1,0 +1,69 @@
+{
+  "timestamp": "2025-08-10T16:52:47.647492",
+  "database_config": {
+    "host": "localhost",
+    "database": "test_data",
+    "user": "test",
+    "port": 5433,
+    "connect_timeout": 10
+  },
+  "performance_metrics": {
+    "frequent_product_pairs": {
+      "execution_time": 0.5768067836761475,
+      "row_count": 0,
+      "timestamp": "2025-08-10T16:52:46.148077"
+    },
+    "market_basket_analysis": {
+      "execution_time": 0.7238259315490723,
+      "row_count": 0,
+      "timestamp": "2025-08-10T16:52:46.872066"
+    },
+    "category_cross_selling": {
+      "execution_time": 0.7709360122680664,
+      "row_count": 20,
+      "timestamp": "2025-08-10T16:52:47.643164"
+    }
+  },
+  "query_summaries": {
+    "frequent_product_pairs": {
+      "description": "Products most frequently bought together in the same order",
+      "row_count": 0,
+      "columns": [
+        "product_a",
+        "product_b",
+        "brand_a",
+        "brand_b",
+        "times_bought_together",
+        "total_quantity_pairs",
+        "avg_combined_price",
+        "percentage_of_orders"
+      ]
+    },
+    "market_basket_analysis": {
+      "description": "Market basket analysis with support, confidence, and lift metrics",
+      "row_count": 0,
+      "columns": [
+        "product_a",
+        "product_b",
+        "pair_orders",
+        "support_percent",
+        "confidence_a_to_b",
+        "confidence_b_to_a",
+        "lift"
+      ]
+    },
+    "category_cross_selling": {
+      "description": "Cross-selling patterns between different product categories",
+      "row_count": 20,
+      "columns": [
+        "category_a",
+        "category_b",
+        "orders_with_both",
+        "total_items",
+        "avg_combined_price",
+        "total_combinations",
+        "cross_sell_rate"
+      ]
+    }
+  }
+}
