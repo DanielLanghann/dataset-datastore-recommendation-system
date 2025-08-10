@@ -94,8 +94,19 @@ class DatasetViewSet(viewsets.ModelViewSet):
         """
         Create a new dataset.
         """
+        logger.info(f"Dataset creation request data: {request.data}")
+        
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as ve:
+            logger.error(f"Serializer validation error: {ve}")
+            logger.error(f"Serializer errors: {serializer.errors}")
+            return Response(
+                {"error": f"Validation error: {str(ve)}", "details": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             with transaction.atomic():

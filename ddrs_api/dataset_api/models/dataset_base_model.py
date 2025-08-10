@@ -6,14 +6,21 @@ from django.core.validators import MinValueValidator
 class DatasetBaseModel(models.Model):
 
     DATA_STRUCTURE_CHOICES = [
+        ("", "Select Structure"),
         ("structured", "Structured"),
         ("semi_structured", "Semi-Structured"),
         ("unstructured", "Unstructured"),
     ]
 
-    GROWTH_RATE_CHOICES = [("high", "High"), ("medium", "Medium"), ("low", "Low")]
+    GROWTH_RATE_CHOICES = [
+        ("", "Select Growth Rate"),
+        ("high", "High"), 
+        ("medium", "Medium"), 
+        ("low", "Low")
+    ]
 
     ACCESS_PATTERN_CHOICES = [
+        ("", "Select Access Pattern"),
         ("read_heavy", "Read Heavy"),
         ("write_heavy", "Write Heavy"),
         ("read_write_heavy", "Read/Write Heavy"),
@@ -21,7 +28,12 @@ class DatasetBaseModel(models.Model):
         ("transactional", "Transactional"),
     ]
 
-    QUERY_COMPLEXITY_CHOICES = [("high", "High"), ("medium", "Medium"), ("low", "Low")]
+    QUERY_COMPLEXITY_CHOICES = [
+        ("", "Select Complexity"),
+        ("high", "High"), 
+        ("medium", "Medium"), 
+        ("low", "Low")
+    ]
 
     # Auto generated fields
     id = models.AutoField(primary_key=True)
@@ -51,24 +63,28 @@ class DatasetBaseModel(models.Model):
         choices=DATA_STRUCTURE_CHOICES,
         help_text="The data structure of the dataset",
         default="",
+        blank=True,
     )
     growth_rate = models.CharField(
         max_length=20,
         choices=GROWTH_RATE_CHOICES,
         help_text="The growth rate of the dataset",
         default="",
+        blank=True,
     )
     access_patterns = models.CharField(
         max_length=20,
         choices=ACCESS_PATTERN_CHOICES,
         help_text="The access pattern of the dataset",
         default="",
+        blank=True,
     )
     query_complexity = models.CharField(
         max_length=20,
         choices=QUERY_COMPLEXITY_CHOICES,
         help_text="The related query complexity",
         default="",
+        blank=True,
     )
     properties = models.JSONField(
         default=list,
