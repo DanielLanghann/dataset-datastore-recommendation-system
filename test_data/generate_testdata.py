@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Test Data Generator Script
 Generates realistic test data for the database with proper foreign key relationships
@@ -6,7 +5,9 @@ Generates realistic test data for the database with proper foreign key relations
 
 import os
 import sys
+import json
 import random
+import psutil
 import psycopg2
 from psycopg2.extras import execute_batch
 from faker import Faker
@@ -23,6 +24,16 @@ class TestDataGenerator:
         self.db_config = db_config
         self.connection = None
         self.existing_data = {}
+        
+        # Execution tracking
+        self.execution_start_time = datetime.now()
+        self.execution_log = []
+        self.error_count = 0
+        self.warning_count = 0
+        self.total_operations = 0
+        self.successful_operations = 0
+        self.failed_operations = 0
+        self.records_created = {}  # Track records created per table
         
         # Reset Faker's unique provider to start fresh
         fake.unique.clear()
@@ -56,14 +67,28 @@ class TestDataGenerator:
             ]
         }
 
+    def log_message(self, message, level='INFO'):
+        """Log messages for execution tracking"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"[{timestamp}] {level}: {message}"
+        self.execution_log.append(log_entry)
+        
+        if level == 'ERROR':
+            self.error_count += 1
+        elif level == 'WARNING':
+            self.warning_count += 1
+
     def connect(self):
         """Create database connection"""
         try:
             self.connection = psycopg2.connect(**self.db_config)
+            self.log_message(f"Connected to database: {self.db_config['host']}:{self.db_config['port']}")
             print(f"✅ Connected to database: {self.db_config['host']}:{self.db_config['port']}")
             return True
         except psycopg2.Error as e:
-            print(f"❌ Database connection failed: {e}")
+            error_msg = f"Database connection failed: {e}"
+            self.log_message(error_msg, 'ERROR')
+            print(f"❌ {error_msg}")
             return False
 
     def disconnect(self):
@@ -94,13 +119,18 @@ class TestDataGenerator:
             
             cursor.close()
             
-            print(f"📊 Loaded existing data: {len(self.existing_data['categories'])} categories, "
-                  f"{len(self.existing_data['customers'])} customers, "
-                  f"{len(self.existing_data['products'])} products, "
-                  f"{len(self.existing_data['orders'])} orders")
+            log_msg = f"Loaded existing data: {len(self.existing_data['categories'])} categories, " \
+                     f"{len(self.existing_data['customers'])} customers, " \
+                     f"{len(self.existing_data['products'])} products, " \
+                     f"{len(self.existing_data['orders'])} orders"
+            
+            self.log_message(log_msg)
+            print(f"📊 {log_msg}")
             
         except psycopg2.Error as e:
-            print(f"❌ Error loading existing data: {e}")
+            error_msg = f"Error loading existing data: {e}"
+            self.log_message(error_msg, 'ERROR')
+            print(f"❌ {error_msg}")
             return False
         
         return True
@@ -109,9 +139,12 @@ class TestDataGenerator:
         """Reset Faker's unique provider when it runs out of values"""
         try:
             fake.unique.clear()
+            self.log_message("Reset Faker unique provider")
             print("🔄 Reset Faker unique provider")
         except Exception as e:
-            print(f"⚠️  Could not reset Faker unique provider: {e}")
+            warning_msg = f"Could not reset Faker unique provider: {e}"
+            self.log_message(warning_msg, 'WARNING')
+            print(f"⚠️  {warning_msg}")
 
     def generate_customers(self, count):
         """Generate customer data with guaranteed unique emails"""
@@ -126,9 +159,12 @@ class TestDataGenerator:
             used_emails.update([email[0] for email in existing_emails])
             cursor.close()
             if len(used_emails) > 0:
+                self.log_message(f"Found {len(used_emails):,} existing emails in database")
                 print(f"   Found {len(used_emails):,} existing emails in database")
         except Exception as e:
-            print(f"   Could not check existing emails: {e}")
+            warning_msg = f"Could not check existing emails: {e}"
+            self.log_message(warning_msg, 'WARNING')
+            print(f"   {warning_msg}")
         
         for i in range(count):
             # Generate unique email with fallback strategies
@@ -179,13 +215,31 @@ class TestDataGenerator:
             
             # Progress indicator for large datasets
             if count > 10000 and (i + 1) % 10000 == 0:
-                print(f"   Generated {i + 1:,} customers...")
+                progress_msg = f"Generated {i + 1:,} customers..."
+                self.log_message(progress_msg)
+                print(f"   {progress_msg}")
         
         return customers
 
     def generate_categories(self, count):
-        """Generate category data"""
+        """Generate category data with duplicate checking"""
         categories = []
+        
+        # Get existing category names to avoid duplicates
+        existing_names = set()
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT category_name FROM categories")
+            existing_names = {row[0] for row in cursor.fetchall()}
+            cursor.close()
+            if existing_names:
+                self.log_message(f"Found {len(existing_names)} existing categories")
+                print(f"   Found {len(existing_names)} existing categories")
+        except Exception as e:
+            warning_msg = f"Could not check existing categories: {e}"
+            self.log_message(warning_msg, 'WARNING')
+            print(f"   {warning_msg}")
+        
         base_categories = [
             ('Electronics', 'Electronic devices and accessories'),
             ('Clothing', 'Apparel and fashion items'),
@@ -194,22 +248,55 @@ class TestDataGenerator:
             ('Sports', 'Sports and fitness equipment'),
             ('Beauty', 'Beauty and personal care products'),
             ('Toys', 'Toys and games'),
-            ('Automotive', 'Car parts and accessories')
+            ('Automotive', 'Car parts and accessories'),
+            ('Health & Wellness', 'Health and wellness products'),
+            ('Food & Beverages', 'Food and drink items'),
+            ('Music & Movies', 'Entertainment media'),
+            ('Office Supplies', 'Business and office equipment'),
+            ('Pet Supplies', 'Pet care and accessories'),
+            ('Travel & Luggage', 'Travel accessories and luggage'),
+            ('Art & Crafts', 'Art supplies and craft materials')
         ]
         
-        # Add base categories first
-        for name, desc in base_categories[:min(count, len(base_categories))]:
-            categories.append((name, desc, None))
+        # Add base categories that don't already exist
+        for name, desc in base_categories:
+            if name not in existing_names and len(categories) < count:
+                categories.append((name, desc))
+                existing_names.add(name)  # Track what we're adding
         
-        # Generate additional categories if needed
+        # Generate additional unique categories if needed
         remaining = count - len(categories)
-        for i in range(remaining):
-            category = (
-                f"{fake.word().title()} {fake.word().title()}",
-                fake.text(max_nb_chars=200),
-                None  # No parent for generated categories
-            )
-            categories.append(category)
+        attempts = 0
+        max_attempts = remaining * 10  # Prevent infinite loop
+        
+        while remaining > 0 and attempts < max_attempts:
+            # Generate a unique category name
+            category_name = f"{fake.word().title()} {fake.word().title()}"
+            
+            # Make it more unique if it already exists
+            if category_name in existing_names:
+                category_name = f"{fake.word().title()} {fake.word().title()} {fake.word().title()}"
+            
+            # If still not unique, add a number
+            if category_name in existing_names:
+                category_name = f"{fake.word().title()} {fake.word().title()} {random.randint(1, 9999)}"
+            
+            # Check if this name is unique
+            if category_name not in existing_names:
+                category = (
+                    category_name,
+                    fake.text(max_nb_chars=200)
+                )
+                categories.append(category)
+                existing_names.add(category_name)
+                remaining -= 1
+            
+            attempts += 1
+        
+        if remaining > 0:
+            warning_msg = f"Could only generate {len(categories)} unique categories out of {count} requested"
+            self.log_message(warning_msg, 'WARNING')
+            print(f"⚠️  {warning_msg}")
         
         return categories
 
@@ -317,10 +404,12 @@ class TestDataGenerator:
         
         # If we have actual associations, use them; otherwise generate realistic ones
         if actual_associations:
+            self.log_message(f"Using {len(actual_associations)} actual product associations from order data")
             print(f"📊 Using {len(actual_associations)} actual product associations from order data")
             # Limit to requested count
             return list(actual_associations.items())[:count]
         else:
+            self.log_message("No order data found, generating realistic product associations")
             print("📊 No order data found, generating realistic product associations")
             return self._generate_realistic_associations(count)
     
@@ -356,7 +445,9 @@ class TestDataGenerator:
             return associations
             
         except psycopg2.Error as e:
-            print(f"⚠️  Could not calculate actual associations: {e}")
+            warning_msg = f"Could not calculate actual associations: {e}"
+            self.log_message(warning_msg, 'WARNING')
+            print(f"⚠️  {warning_msg}")
             return {}
     
     def update_product_associations_from_orders(self):
@@ -365,6 +456,7 @@ class TestDataGenerator:
             cursor = self.connection.cursor()
             
             # First, clear existing associations that might be outdated
+            self.log_message("Updating product associations based on actual order patterns")
             print("🔄 Updating product associations based on actual order patterns...")
             
             # Calculate current associations from order data
@@ -392,11 +484,15 @@ class TestDataGenerator:
             self.connection.commit()
             cursor.close()
             
-            print(f"✅ Updated {rows_affected} product associations based on order data")
+            success_msg = f"Updated {rows_affected} product associations based on order data"
+            self.log_message(success_msg)
+            print(f"✅ {success_msg}")
             return True
             
         except psycopg2.Error as e:
-            print(f"❌ Error updating product associations: {e}")
+            error_msg = f"Error updating product associations: {e}"
+            self.log_message(error_msg, 'ERROR')
+            print(f"❌ {error_msg}")
             self.connection.rollback()
             return False
     
@@ -544,8 +640,12 @@ class TestDataGenerator:
     def insert_data(self, table_name, data, columns):
         """Insert data into specified table with better error handling for large datasets"""
         if not data:
-            print(f"⚠️  No data to insert for {table_name}")
+            warning_msg = f"No data to insert for {table_name}"
+            self.log_message(warning_msg, 'WARNING')
+            print(f"⚠️  {warning_msg}")
             return True
+        
+        self.total_operations += 1
         
         try:
             cursor = self.connection.cursor()
@@ -571,11 +671,15 @@ class TestDataGenerator:
                     # Show progress for large datasets
                     if total_batches > 1:
                         batch_num = (i // batch_size) + 1
-                        print(f"   Batch {batch_num}/{total_batches} completed ({inserted_count:,}/{len(data):,} rows)")
+                        progress_msg = f"Batch {batch_num}/{total_batches} completed ({inserted_count:,}/{len(data):,} rows)"
+                        self.log_message(progress_msg)
+                        print(f"   {progress_msg}")
                         
                 except Exception as batch_error:
                     # Handle individual batch errors (like unique constraint violations)
-                    print(f"⚠️  Batch {i//batch_size + 1} failed, trying individual inserts...")
+                    warning_msg = f"Batch {i//batch_size + 1} failed, trying individual inserts..."
+                    self.log_message(warning_msg, 'WARNING')
+                    print(f"⚠️  {warning_msg}")
                     self.connection.rollback()
                     
                     # Try inserting rows individually to identify problematic rows
@@ -588,22 +692,38 @@ class TestDataGenerator:
                         except Exception as row_error:
                             self.connection.rollback()
                             if "unique constraint" in str(row_error).lower():
-                                print(f"   Skipped duplicate row: {row[1] if len(row) > 1 else row[0]}")
+                                skip_msg = f"Skipped duplicate row: {row[1] if len(row) > 1 else row[0]}"
+                                self.log_message(skip_msg, 'WARNING')
+                                print(f"   {skip_msg}")
                             else:
-                                print(f"   Error with row: {str(row_error)}")
+                                error_msg = f"Error with row: {str(row_error)}"
+                                self.log_message(error_msg, 'ERROR')
+                                print(f"   {error_msg}")
                     
                     inserted_count += individual_inserted
                     if individual_inserted < len(batch):
-                        print(f"   Successfully inserted {individual_inserted}/{len(batch)} rows from failed batch")
+                        batch_msg = f"Successfully inserted {individual_inserted}/{len(batch)} rows from failed batch"
+                        self.log_message(batch_msg)
+                        print(f"   {batch_msg}")
             
             cursor.close()
             
-            print(f"✅ Inserted {inserted_count:,} rows into {table_name}")
+            # Track records created
+            self.records_created[table_name] = inserted_count
+            
+            success_msg = f"Inserted {inserted_count:,} rows into {table_name}"
+            self.log_message(success_msg)
+            print(f"✅ {success_msg}")
+            
+            self.successful_operations += 1
             return True
             
         except psycopg2.Error as e:
-            print(f"❌ Error inserting data into {table_name}: {e}")
+            error_msg = f"Error inserting data into {table_name}: {e}"
+            self.log_message(error_msg, 'ERROR')
+            print(f"❌ {error_msg}")
             self.connection.rollback()
+            self.failed_operations += 1
             return False
 
     def generate_table_data(self, table_name, count):
@@ -611,7 +731,9 @@ class TestDataGenerator:
         # Reset Faker unique provider for large datasets
         if count > 100000:
             self.reset_faker_unique()
-            print(f"🔄 Generating {count:,} rows for {table_name} (this may take a while)...")
+            msg = f"Generating {count:,} rows for {table_name} (this may take a while)..."
+            self.log_message(msg)
+            print(f"🔄 {msg}")
         
         table_generators = {
             'customers': {
@@ -620,7 +742,7 @@ class TestDataGenerator:
             },
             'categories': {
                 'generator': self.generate_categories,
-                'columns': ['category_name', 'description', 'parent_category_id']
+                'columns': ['category_name', 'description']
             },
             'products': {
                 'generator': self.generate_products,
@@ -642,54 +764,305 @@ class TestDataGenerator:
         
         table_name_lower = table_name.lower()
         if table_name_lower not in table_generators:
-            print(f"❌ Unknown table: {table_name}")
+            error_msg = f"Unknown table: {table_name}"
+            self.log_message(error_msg, 'ERROR')
+            print(f"❌ {error_msg}")
             return False
         
-        print(f"🔄 Generating {count:,} rows for {table_name}...")
+        gen_msg = f"Generating {count:,} rows for {table_name}"
+        self.log_message(gen_msg)
+        print(f"🔄 {gen_msg}...")
         
         generator_info = table_generators[table_name_lower]
         try:
             data = generator_info['generator'](count)
             return self.insert_data(table_name, data, generator_info['columns'])
         except Exception as e:
-            print(f"❌ Error generating data for {table_name}: {e}")
+            error_msg = f"Error generating data for {table_name}: {e}"
+            self.log_message(error_msg, 'ERROR')
+            print(f"❌ {error_msg}")
             # Try resetting Faker and retry once for customer generation
             if table_name_lower == 'customers' and 'unique' in str(e).lower():
-                print("🔄 Retrying customer generation with reset Faker...")
+                retry_msg = "Retrying customer generation with reset Faker..."
+                self.log_message(retry_msg)
+                print(f"🔄 {retry_msg}")
                 self.reset_faker_unique()
                 try:
                     data = generator_info['generator'](count)
                     return self.insert_data(table_name, data, generator_info['columns'])
                 except Exception as retry_e:
-                    print(f"❌ Retry failed: {retry_e}")
+                    retry_error_msg = f"Retry failed: {retry_e}"
+                    self.log_message(retry_error_msg, 'ERROR')
+                    print(f"❌ {retry_error_msg}")
             return False
 
     def refresh_existing_data(self):
         """Refresh the existing data cache after insertions"""
         return self.load_existing_data()
 
-    def show_final_statistics(self):
-        """Show final statistics after large data generation"""
+    def get_final_statistics(self):
+        """Get final statistics and return as dictionary"""
         try:
             cursor = self.connection.cursor()
             
             tables = ['customers', 'categories', 'products', 'orders', 'order_items', 'product_associations']
-            print(f"\n📊 Final Database Statistics:")
-            print("=" * 40)
+            statistics = {}
+            total_records = 0
             
             for table in tables:
                 try:
                     cursor.execute(f"SELECT COUNT(*) FROM {table}")
                     count = cursor.fetchone()[0]
-                    print(f"{table.capitalize():20}: {count:,} rows")
-                except:
-                    print(f"{table.capitalize():20}: Error getting count")
+                    statistics[table] = count
+                    total_records += count
+                except Exception as e:
+                    error_msg = f"Error getting count for {table}: {e}"
+                    self.log_message(error_msg, 'ERROR')
+                    statistics[table] = 0
             
             cursor.close()
+            statistics['total_records'] = total_records
+            
+            return statistics
             
         except Exception as e:
-            print(f"⚠️  Could not generate statistics: {e}")
+            error_msg = f"Could not generate statistics: {e}"
+            self.log_message(error_msg, 'ERROR')
+            return {}
 
+    def show_final_statistics(self):
+        """Show final statistics after large data generation"""
+        statistics = self.get_final_statistics()
+        
+        if statistics:
+            print(f"\n📊 Final Database Statistics:")
+            print("=" * 40)
+            
+            for table, count in statistics.items():
+                if table != 'total_records':
+                    print(f"{table.capitalize():20}: {count:,} rows")
+            
+            print("=" * 40)
+            print(f"{'Total Records':20}: {statistics.get('total_records', 0):,} rows")
+
+    def get_memory_usage(self):
+        """Get current memory usage in MB"""
+        try:
+            process = psutil.Process(os.getpid())
+            memory_mb = process.memory_info().rss / 1024 / 1024
+            return round(memory_mb, 2)
+        except:
+            return 0.0
+
+    def get_environment_info(self):
+        """Get system environment information"""
+        try:
+            return {
+                'python_version': sys.version,
+                'platform': sys.platform,
+                'cpu_count': os.cpu_count(),
+                'memory_mb': self.get_memory_usage(),
+                'working_directory': os.getcwd()
+            }
+        except:
+            return {}
+    
+    def get_complete_database_state(self):
+        """Get complete database state with row counts for all tables"""
+        try:
+            cursor = self.connection.cursor()
+            
+            # Define all tables we want to track
+            tables = [
+                'categories', 'customers', 'products', 'orders', 
+                'order_items', 'product_associations', 'analytics_runs', 
+                'analytics_query_results', 'test_data_execution_log'
+            ]
+            
+            database_state = {}
+            total_records = 0
+            
+            for table in tables:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    count = cursor.fetchone()[0]
+                    database_state[table] = count
+                    total_records += count
+                except psycopg2.Error as e:
+                    # If table doesn't exist or access error, set to 0
+                    self.log_message(f"Could not get count for {table}: {e}", 'WARNING')
+                    database_state[table] = 0
+            
+            database_state['total_records'] = total_records
+            
+            # Add timestamp for when this state was captured
+            database_state['captured_at'] = datetime.now().isoformat()
+            
+            cursor.close()
+            return database_state
+            
+        except psycopg2.Error as e:
+            error_msg = f"Could not capture database state: {e}"
+            self.log_message(error_msg, 'ERROR')
+            # Return empty state with timestamp
+            return {
+                'captured_at': datetime.now().isoformat(),
+                'error': str(e),
+                'total_records': 0
+            }
+
+    def store_execution_log(self, args, statistics, execution_status):
+        """Store execution results with complete database state for performance analysis"""
+        try:
+            # Check if connection is still valid
+            if not self.connection or self.connection.closed:
+                warning_msg = "Database connection is closed, cannot store execution log"
+                self.log_message(warning_msg, 'WARNING')
+                print(f"⚠️  {warning_msg}")
+                return
+            
+            cursor = self.connection.cursor()
+            
+            # Calculate execution metrics
+            execution_end_time = datetime.now()
+            total_execution_time_ms = (execution_end_time - self.execution_start_time).total_seconds() * 1000
+            average_operation_time_ms = total_execution_time_ms / max(self.total_operations, 1)
+            
+            # Calculate total records created in this execution
+            total_records_created = sum(self.records_created.values())
+            
+            # Get COMPLETE database state for performance analysis
+            complete_database_state = self.get_complete_database_state()
+            
+            # Calculate data volume estimate (rough estimate: 100 bytes per record)
+            data_volume_mb = (total_records_created * 100) / (1024 * 1024)
+            
+            # Prepare enhanced configuration with complete state tracking
+            configuration_used = {
+                'execution_details': {
+                    'rows_per_table_requested': getattr(args, 'rows', 0),
+                    'tables_processed': getattr(args, 'tables', []) if hasattr(args, 'tables') else [],
+                    'batch_size': getattr(args, 'batch_size', 1000),
+                    'skip_duplicates': getattr(args, 'skip_duplicates', False),
+                    'update_associations': getattr(args, 'update_associations', False),
+                    'all_tables': getattr(args, 'all', False),
+                    'operation_type': 'association_update' if getattr(args, 'update_associations', False) else 'data_generation'
+                },
+                'records_created_this_execution': dict(self.records_created),
+                'total_records_created_this_execution': total_records_created,
+                'database_state_after_execution': complete_database_state,
+                'performance_context': {
+                    'execution_duration_seconds': round(total_execution_time_ms / 1000, 2),
+                    'records_per_second': round(total_records_created / max(total_execution_time_ms / 1000, 0.1), 2) if total_records_created > 0 else 0,
+                    'operations_per_second': round(self.total_operations / max(total_execution_time_ms / 1000, 0.1), 2),
+                    'database_size_at_completion': complete_database_state.get('total_records', 0)
+                }
+            }
+            
+            # Enhanced tables affected tracking
+            if getattr(args, 'update_associations', False):
+                tables_affected = ['product_associations']
+            else:
+                tables_affected = list(self.records_created.keys())
+            
+            # NEW: Store the complete database state in a separate field for easy querying
+            database_state_json = json.dumps(complete_database_state)
+            
+            # Insert execution log with enhanced data
+            insert_query = """
+                INSERT INTO Test_Data_Execution_Log (
+                    execution_timestamp, script_name, script_version, execution_type,
+                    database_host, database_name, total_operations, successful_operations,
+                    failed_operations, total_execution_time_ms, average_operation_time_ms,
+                    memory_usage_mb, records_created, tables_affected, data_volume_mb,
+                    execution_status, error_count, warning_count, execution_log,
+                    error_details, configuration_used, environment_info
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+            """
+            
+            # Prepare error details
+            error_details = None
+            if self.error_count > 0:
+                error_logs = [log for log in self.execution_log if 'ERROR:' in log]
+                error_details = '\n'.join(error_logs[-10:])  # Last 10 errors
+            
+            values = (
+                self.execution_start_time,
+                'generate_testdata.py',
+                '1.0',
+                configuration_used['execution_details']['operation_type'],
+                self.db_config['host'],
+                self.db_config['database'],
+                self.total_operations,
+                self.successful_operations,
+                self.failed_operations,
+                round(total_execution_time_ms, 2),
+                round(average_operation_time_ms, 2),
+                self.get_memory_usage(),
+                total_records_created,
+                json.dumps(tables_affected),
+                round(data_volume_mb, 2),
+                execution_status,
+                self.error_count,
+                self.warning_count,
+                '\n'.join(self.execution_log[-50:]),  # Last 50 log entries
+                error_details,
+                json.dumps(configuration_used),  # Complete configuration including database state
+                json.dumps(self.get_environment_info())
+            )
+            
+            cursor.execute(insert_query, values)
+            execution_id = cursor.lastrowid if cursor.lastrowid else "unknown"
+            self.connection.commit()
+            cursor.close()
+            
+            # Enhanced success message with complete database state
+            print(f"✅ Execution log stored in Test_Data_Execution_Log table (ID: {execution_id})")
+            
+            # Show what was created in this execution
+            if total_records_created > 0:
+                print(f"📊 Created in this execution: {total_records_created:,} records across {len(self.records_created)} tables:")
+                for table, count in self.records_created.items():
+                    print(f"   • {table}: {count:,} rows")
+            
+            # Show complete database state for performance context
+            if complete_database_state and complete_database_state.get('total_records', 0) > 0:
+                print(f"📈 Complete database state after execution:")
+                core_tables = ['categories', 'customers', 'products', 'orders', 'order_items', 'product_associations']
+                for table in core_tables:
+                    if table in complete_database_state:
+                        count = complete_database_state[table]
+                        print(f"   • {table.capitalize():<20}: {count:,} rows")
+                print(f"   • {'Total Records':<20}: {complete_database_state['total_records']:,} rows")
+            
+            # Show performance context
+            perf_context = configuration_used['performance_context']
+            if perf_context['records_per_second'] > 0:
+                print(f"⚡ Performance: {perf_context['records_per_second']:,.0f} records/sec, {perf_context['execution_duration_seconds']} seconds")
+            
+            self.log_message(f"Execution log stored with complete database state (ID: {execution_id})")
+            
+        except psycopg2.OperationalError as e:
+            if "connection" in str(e).lower():
+                warning_msg = f"Connection error while storing execution log: {e}"
+                self.log_message(warning_msg, 'WARNING')
+                print(f"⚠️  {warning_msg}")
+            else:
+                error_msg = f"Database error while storing execution log: {e}"
+                self.log_message(error_msg, 'ERROR')
+                print(f"⚠️  {error_msg}")
+        except Exception as e:
+            error_msg = f"Failed to store execution log: {e}"
+            self.log_message(error_msg, 'ERROR')
+            print(f"⚠️  {error_msg}")
+            # Don't fail the entire operation if logging fails
+            try:
+                if self.connection and not self.connection.closed:
+                    self.connection.rollback()
+            except:
+                pass
 
 def load_environment():
     """Load environment variables"""
@@ -743,6 +1116,9 @@ def main():
     if not generator.connect():
         sys.exit(1)
     
+    execution_status = 'success'
+    statistics = {}
+    
     try:
         # Load existing data for foreign key validation
         if not generator.load_existing_data():
@@ -750,10 +1126,49 @@ def main():
         
         # Handle association updates if requested
         if args.update_associations:
+            generator.log_message("Starting product associations update")
             print("🔄 Updating product associations from order data...")
-            generator.update_product_associations_from_orders()
-            print("🎉 Association update completed!")
-            return
+            
+            # Define start time for associations update
+            associations_start_time = datetime.now()
+            
+            try:
+                if generator.update_product_associations_from_orders():
+                    print("🎉 Association update completed!")
+                    execution_status = 'success'
+                else:
+                    execution_status = 'partial_success'
+                
+                # Get final statistics
+                statistics = generator.get_final_statistics()
+                
+                # Calculate execution summary for associations update
+                completion_msg = f"Product associations update completed with status: {execution_status}"
+                generator.log_message(completion_msg)
+                print(f"\n🎉 {completion_msg}!")
+                
+                total_duration = datetime.now() - associations_start_time
+                print(f"⏱️  Total time: {total_duration.total_seconds():.1f}s")
+                
+                # Show association statistics
+                if statistics.get('product_associations', 0) > 0:
+                    print(f"📊 Product associations in database: {statistics['product_associations']:,}")
+                
+            except KeyboardInterrupt:
+                interruption_msg = "Association update interrupted by user"
+                generator.log_message(interruption_msg, 'ERROR')
+                print(f"\n⏹️  {interruption_msg}")
+                execution_status = 'failure'
+                statistics = generator.get_final_statistics()
+            except Exception as e:
+                error_msg = f"Unexpected error during association update: {e}"
+                generator.log_message(error_msg, 'ERROR')
+                print(f"❌ {error_msg}")
+                execution_status = 'failure'
+                statistics = generator.get_final_statistics()
+            
+            # DON'T store execution log or disconnect here - let the main finally block handle it
+            return  # Exit after handling associations
         
         # Determine which tables to process
         if args.all:
@@ -761,6 +1176,7 @@ def main():
         else:
             tables = [table.lower() for table in args.tables]
         
+        generator.log_message(f"Processing tables: {', '.join(tables)}")
         print(f"📋 Processing tables: {', '.join(tables)}")
         
         # Process tables in dependency order
@@ -772,6 +1188,7 @@ def main():
         
         for table in ordered_tables:
             table_start_time = datetime.now()
+            generator.log_message(f"Starting processing of {table}")
             print(f"\n📦 Processing {table}...")
             
             if generator.generate_table_data(table, args.rows):
@@ -780,13 +1197,27 @@ def main():
                 generator.refresh_existing_data()
                 
                 table_duration = datetime.now() - table_start_time
-                print(f"✅ {table} completed in {table_duration.total_seconds():.1f}s")
+                duration_msg = f"{table} completed in {table_duration.total_seconds():.1f}s"
+                generator.log_message(duration_msg)
+                print(f"✅ {duration_msg}")
             else:
-                print(f"⚠️  Failed to generate data for {table}, continuing with next table...")
+                warning_msg = f"Failed to generate data for {table}, continuing with next table..."
+                generator.log_message(warning_msg, 'WARNING')
+                print(f"⚠️  {warning_msg}")
         
         total_duration = datetime.now() - total_start_time
         
-        print(f"\n🎉 Test data generation completed!")
+        # Determine final execution status
+        if success_count == len(ordered_tables):
+            execution_status = 'success'
+        elif success_count > 0:
+            execution_status = 'partial_success'
+        else:
+            execution_status = 'failure'
+        
+        completion_msg = f"Test data generation completed with status: {execution_status}"
+        generator.log_message(completion_msg)
+        print(f"\n🎉 {completion_msg}!")
         print(f"✅ Successfully processed {success_count}/{len(ordered_tables)} tables")
         print(f"⏱️  Total time: {total_duration.total_seconds():.1f}s")
         
@@ -794,11 +1225,28 @@ def main():
             # Show final statistics for large datasets
             generator.show_final_statistics()
         
+        # Get final statistics
+        statistics = generator.get_final_statistics()
+        
     except KeyboardInterrupt:
-        print("\n⏹️  Generation interrupted by user")
+        interruption_msg = "Generation interrupted by user"
+        generator.log_message(interruption_msg, 'ERROR')
+        print(f"\n⏹️  {interruption_msg}")
+        execution_status = 'failure'
+        statistics = generator.get_final_statistics()
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        error_msg = f"Unexpected error: {e}"
+        generator.log_message(error_msg, 'ERROR')
+        print(f"❌ {error_msg}")
+        execution_status = 'failure'
+        statistics = generator.get_final_statistics()
     finally:
+        # Always store execution log before disconnecting
+        try:
+            generator.store_execution_log(args, statistics, execution_status)
+        except Exception as log_error:
+            print(f"⚠️  Failed to store execution log: {log_error}")
+        
         generator.disconnect()
 
 

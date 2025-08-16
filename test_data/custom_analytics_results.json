@@ -1,0 +1,414 @@
+{
+  "export_metadata": {
+    "timestamp": "2025-08-16T13:47:48.576826",
+    "database_host": "localhost",
+    "database_name": "test_data",
+    "total_queries_executed": 4,
+    "successful_queries": 4,
+    "execution_order": [
+      "favorite_products",
+      "favorite_categories",
+      "customer_product_patterns",
+      "product_associations"
+    ],
+    "script_version": "2.0_flexible",
+    "description": "Flexible business analytics queries with loop-based execution"
+  },
+  "configuration": {
+    "display_limit": 5,
+    "sample_data_limit": 3,
+    "export_filename": "custom_analytics_results.json"
+  },
+  "performance_summary": {
+    "total_execution_time_ms": 5235.95,
+    "total_rows_queried": 1144926,
+    "average_response_time_ms": 1308.9875,
+    "success_rate_percent": 100.0
+  },
+  "query_results": {
+    "favorite_products": {
+      "query_info": {
+        "name": "favorite_products",
+        "description": "Most popular products by total quantity sold from completed/shipped orders",
+        "dataset_reference": "dataset 10",
+        "sql": "SELECT p.product_id, p.product_name, p.brand, c.category_name, \n               SUM(oi.quantity) as total_quantity_sold,\n               COUNT(DISTINCT oi.order_id) as number_of_orders,\n               SUM(oi.total_price) as total_revenue\n        FROM Products p\n        JOIN Categories c ON p.category_id = c.category_id\n        JOIN Order_Items oi ON p.product_id = oi.product_id\n        JOIN Orders o ON oi.order_id = o.order_id\n        WHERE o.status IN ('completed', 'shipped') -- Nur abgeschlossene/versendete Bestellungen\n        GROUP BY p.product_id, p.product_name, p.brand, c.category_name\n        ORDER BY total_quantity_sold DESC;",
+        "affected_tables": [
+          "CATEGORIES",
+          "ORDERS",
+          "ORDER_ITEMS",
+          "PRODUCTS"
+        ],
+        "execution_timestamp": "2025-08-16T13:47:44.551575",
+        "execution_order": 1
+      },
+      "performance_metrics": {
+        "response_time_ms": 1288.95,
+        "response_time_seconds": 1.2889,
+        "rows_returned": 164601,
+        "columns_returned": 7
+      },
+      "data_structure": {
+        "column_names": [
+          "product_id",
+          "product_name",
+          "brand",
+          "category_name",
+          "total_quantity_sold",
+          "number_of_orders",
+          "total_revenue"
+        ],
+        "sample_data": [
+          [
+            517,
+            "Men's Skirt",
+            "H&M",
+            "Clothing",
+            32,
+            9,
+            "8739.97"
+          ],
+          [
+            5214,
+            "Production Majority",
+            "Nike",
+            "Home & Garden",
+            30,
+            8,
+            "5152.25"
+          ],
+          [
+            63,
+            "Zara Pavilion 15\"",
+            "Generic",
+            "Laptops",
+            29,
+            8,
+            "8575.61"
+          ]
+        ],
+        "data_types": [
+          "int",
+          "str",
+          "str",
+          "str",
+          "int",
+          "int",
+          "Decimal"
+        ]
+      },
+      "results_summary": {
+        "has_data": true,
+        "first_row": [
+          517,
+          "Men's Skirt",
+          "H&M",
+          "Clothing",
+          32,
+          9,
+          "8739.97"
+        ],
+        "total_data_points": 1152207
+      }
+    },
+    "favorite_categories": {
+      "query_info": {
+        "name": "favorite_categories",
+        "description": "Most popular product categories by total quantity sold",
+        "dataset_reference": "dataset 8",
+        "sql": "SELECT\n            c.category_id,\n            c.category_name,\n            c.description,\n            SUM(oi.quantity) as total_quantity_sold,\n            COUNT(DISTINCT oi.order_id) as number_of_orders,\n            COUNT(DISTINCT p.product_id) as number_of_products,\n            SUM(oi.total_price) as total_revenue,\n            ROUND(AVG(oi.unit_price), 2) as avg_unit_price\n        FROM Categories c\n        JOIN Products p ON c.category_id = p.category_id\n        JOIN Order_Items oi ON p.product_id = oi.product_id\n        JOIN Orders o ON oi.order_id = o.order_id\n        WHERE o.status IN ('completed', 'shipped')\n        GROUP BY c.category_id, c.category_name, c.description\n        ORDER BY total_quantity_sold DESC;",
+        "affected_tables": [
+          "CATEGORIES",
+          "ORDERS",
+          "ORDER_ITEMS",
+          "PRODUCTS"
+        ],
+        "execution_timestamp": "2025-08-16T13:47:45.426350",
+        "execution_order": 2
+      },
+      "performance_metrics": {
+        "response_time_ms": 868.44,
+        "response_time_seconds": 0.8684,
+        "rows_returned": 8,
+        "columns_returned": 8
+      },
+      "data_structure": {
+        "column_names": [
+          "category_id",
+          "category_name",
+          "description",
+          "total_quantity_sold",
+          "number_of_orders",
+          "number_of_products",
+          "total_revenue",
+          "avg_unit_price"
+        ],
+        "sample_data": [
+          [
+            7,
+            "Men's Clothing",
+            "Clothing for men",
+            73115,
+            22252,
+            20781,
+            "18591879.55",
+            "254.40"
+          ],
+          [
+            2,
+            "Clothing",
+            "Apparel and fashion items",
+            72777,
+            22181,
+            20575,
+            "18540285.54",
+            "254.42"
+          ],
+          [
+            4,
+            "Home & Garden",
+            "Home improvement and garden supplies",
+            72761,
+            22359,
+            20728,
+            "18465427.47",
+            "253.85"
+          ]
+        ],
+        "data_types": [
+          "int",
+          "str",
+          "str",
+          "int",
+          "int",
+          "int",
+          "Decimal",
+          "Decimal"
+        ]
+      },
+      "results_summary": {
+        "has_data": true,
+        "first_row": [
+          7,
+          "Men's Clothing",
+          "Clothing for men",
+          73115,
+          22252,
+          20781,
+          "18591879.55",
+          "254.40"
+        ],
+        "total_data_points": 64
+      }
+    },
+    "customer_product_patterns": {
+      "query_info": {
+        "name": "customer_product_patterns",
+        "description": "Customer purchasing patterns - how often each customer buys each product",
+        "dataset_reference": "dataset 10",
+        "sql": "SELECT\n            c.customer_id,\n            CONCAT(c.first_name, ' ', c.last_name) as customer_name,\n            c.email,\n            p.product_id,\n            p.product_name,\n            p.brand,\n            cat.category_name,\n            SUM(oi.quantity) as total_quantity_purchased,\n            COUNT(DISTINCT o.order_id) as number_of_orders,\n            SUM(oi.total_price) as total_spent_on_product,\n            ROUND(AVG(oi.unit_price), 2) as avg_unit_price,\n            MIN(o.order_date) as first_purchase_date,\n            MAX(o.order_date) as last_purchase_date\n        FROM Customers c\n        JOIN Orders o ON c.customer_id = o.customer_id\n        JOIN Order_Items oi ON o.order_id = oi.order_id\n        JOIN Products p ON oi.product_id = p.product_id\n        JOIN Categories cat ON p.category_id = cat.category_id\n        WHERE o.status IN ('completed', 'shipped')\n        GROUP BY\n            c.customer_id, c.first_name, c.last_name, c.email,\n            p.product_id, p.product_name, p.brand, cat.category_name\n        ORDER BY total_quantity_purchased DESC, customer_name ASC, p.product_name ASC;",
+        "affected_tables": [
+          "CATEGORIES",
+          "CUSTOMERS",
+          "ORDERS",
+          "ORDER_ITEMS",
+          "PRODUCTS"
+        ],
+        "execution_timestamp": "2025-08-16T13:47:47.150746",
+        "execution_order": 3
+      },
+      "performance_metrics": {
+        "response_time_ms": 1719.22,
+        "response_time_seconds": 1.7192,
+        "rows_returned": 192582,
+        "columns_returned": 13
+      },
+      "data_structure": {
+        "column_names": [
+          "customer_id",
+          "customer_name",
+          "email",
+          "product_id",
+          "product_name",
+          "brand",
+          "category_name",
+          "total_quantity_purchased",
+          "number_of_orders",
+          "total_spent_on_product",
+          "avg_unit_price",
+          "first_purchase_date",
+          "last_purchase_date"
+        ],
+        "sample_data": [
+          [
+            262389,
+            "Aaron Alexander",
+            "user_202284_115307@testdata.com",
+            53858,
+            "Women's Jacket",
+            "Google",
+            "Men's Clothing",
+            5,
+            1,
+            "716.70",
+            "143.34",
+            "2025-02-11 08:09:11.666380",
+            "2025-02-11 08:09:11.666380"
+          ],
+          [
+            1257,
+            "Aaron Bailey",
+            "richardsonphillip@example.org",
+            929296,
+            "Asus Pixel 17",
+            "Generic",
+            "Smartphones",
+            5,
+            1,
+            "1034.65",
+            "206.93",
+            "2025-02-19 00:59:30.209422",
+            "2025-02-19 00:59:30.209422"
+          ],
+          [
+            1257,
+            "Aaron Bailey",
+            "richardsonphillip@example.org",
+            480593,
+            "Catch Herself",
+            "Dell",
+            "Electronics",
+            5,
+            1,
+            "729.05",
+            "145.81",
+            "2025-04-09 02:59:10.280123",
+            "2025-04-09 02:59:10.280123"
+          ]
+        ],
+        "data_types": [
+          "int",
+          "str",
+          "str",
+          "int",
+          "str",
+          "str",
+          "str",
+          "int",
+          "int",
+          "Decimal",
+          "Decimal",
+          "datetime",
+          "datetime"
+        ]
+      },
+      "results_summary": {
+        "has_data": true,
+        "first_row": [
+          262389,
+          "Aaron Alexander",
+          "user_202284_115307@testdata.com",
+          53858,
+          "Women's Jacket",
+          "Google",
+          "Men's Clothing",
+          5,
+          1,
+          "716.70",
+          "143.34",
+          "2025-02-11 08:09:11.666380",
+          "2025-02-11 08:09:11.666380"
+        ],
+        "total_data_points": 2503566
+      }
+    },
+    "product_associations": {
+      "query_info": {
+        "name": "product_associations",
+        "description": "Products that are frequently bought together - market basket analysis",
+        "dataset_reference": "dataset 13",
+        "sql": "SELECT\n            pa1.product_name as product_a,\n            pa1.brand as brand_a,\n            cat1.category_name as category_a,\n            pa2.product_name as product_b,\n            pa2.brand as brand_b,\n            cat2.category_name as category_b,\n            pa.frequency_count,\n            pa.last_calculated\n        FROM Product_Associations pa\n        JOIN Products pa1 ON pa.product_a_id = pa1.product_id\n        JOIN Products pa2 ON pa.product_b_id = pa2.product_id\n        JOIN Categories cat1 ON pa1.category_id = cat1.category_id\n        JOIN Categories cat2 ON pa2.category_id = cat2.category_id\n        ORDER BY pa.frequency_count DESC;",
+        "affected_tables": [
+          "CATEGORIES",
+          "PRODUCTS",
+          "PRODUCT_ASSOCIATIONS"
+        ],
+        "execution_timestamp": "2025-08-16T13:47:48.541464",
+        "execution_order": 4
+      },
+      "performance_metrics": {
+        "response_time_ms": 1359.34,
+        "response_time_seconds": 1.3593,
+        "rows_returned": 787735,
+        "columns_returned": 8
+      },
+      "data_structure": {
+        "column_names": [
+          "product_a",
+          "brand_a",
+          "category_a",
+          "product_b",
+          "brand_b",
+          "category_b",
+          "frequency_count",
+          "last_calculated"
+        ],
+        "sample_data": [
+          [
+            "The Art of When",
+            "Google",
+            "Books",
+            "Unisex Shirt",
+            "Dell",
+            "Clothing",
+            4,
+            "2025-08-10 14:59:19.137961"
+          ],
+          [
+            "Asus MacBook 15\"",
+            "HP",
+            "Laptops",
+            "Training Agency",
+            "Google",
+            "Home & Garden",
+            4,
+            "2025-08-10 14:59:19.137961"
+          ],
+          [
+            "Student Phone",
+            "Google",
+            "Electronics",
+            "Women's Sweater",
+            "Uniqlo",
+            "Women's Clothing",
+            4,
+            "2025-08-10 14:59:19.137961"
+          ]
+        ],
+        "data_types": [
+          "str",
+          "str",
+          "str",
+          "str",
+          "str",
+          "str",
+          "int",
+          "datetime"
+        ]
+      },
+      "results_summary": {
+        "has_data": true,
+        "first_row": [
+          "The Art of When",
+          "Google",
+          "Books",
+          "Unisex Shirt",
+          "Dell",
+          "Clothing",
+          4,
+          "2025-08-10 14:59:19.137961"
+        ],
+        "total_data_points": 6301880
+      }
+    }
+  }
+}

@@ -1,8 +1,9 @@
 """
-Testdata for running example
+Testdata for running example with analytics tables support
 """
 
 import sys
+import argparse
 import psycopg2
 from decouple import config
 
@@ -21,6 +22,9 @@ def load_environment():
 def get_schema_sql():
     return """
     -- Drop tables if they exist (in correct order to handle foreign keys)
+    DROP TABLE IF EXISTS Analytics_Query_Results CASCADE;
+    DROP TABLE IF EXISTS Analytics_Runs CASCADE;
+    DROP TABLE IF EXISTS Test_Data_Execution_Log CASCADE;
     DROP TABLE IF EXISTS Product_Associations CASCADE;
     DROP TABLE IF EXISTS Order_Items CASCADE;
     DROP TABLE IF EXISTS Orders CASCADE;
@@ -33,7 +37,6 @@ def get_schema_sql():
         category_id SERIAL PRIMARY KEY,
         category_name VARCHAR(255) NOT NULL UNIQUE,
         description TEXT,
-        parent_category_id INTEGER REFERENCES Categories(category_id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -94,8 +97,113 @@ def get_schema_sql():
         UNIQUE(product_a_id, product_b_id)
     );
 
+    -- Analytics_Runs table for storing analytics execution metadata
+    CREATE TABLE Analytics_Runs (
+        run_id SERIAL PRIMARY KEY,
+        export_timestamp TIMESTAMP NOT NULL,
+        database_host VARCHAR(255),
+        database_name VARCHAR(255),
+        total_queries_executed INTEGER,
+        successful_queries INTEGER,
+        execution_order TEXT, -- JSON array of query names
+        script_version VARCHAR(50),
+        description TEXT,
+        
+        -- Configuration
+        display_limit INTEGER,
+        sample_data_limit INTEGER,
+        export_filename_template VARCHAR(255),
+        timestamp_format VARCHAR(50),
+        
+        -- Performance Summary
+        total_execution_time_ms DECIMAL(10,2),
+        total_rows_queried INTEGER,
+        average_response_time_ms DECIMAL(10,2),
+        success_rate_percent DECIMAL(5,2),
+        
+        -- Additional metadata
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        analytics_json TEXT -- Store the complete JSON for backup/reference
+    );
+
+    -- Analytics_Query_Results table for individual query results
+    CREATE TABLE Analytics_Query_Results (
+        result_id SERIAL PRIMARY KEY,
+        run_id INTEGER NOT NULL,
+        
+        -- Query Information
+        query_name VARCHAR(255) NOT NULL,
+        query_description TEXT,
+        dataset_reference VARCHAR(100),
+        sql_query TEXT,
+        affected_tables TEXT, -- JSON array of table names
+        execution_timestamp TIMESTAMP,
+        execution_order INTEGER,
+        
+        -- Performance Metrics
+        response_time_ms DECIMAL(10,2),
+        response_time_seconds DECIMAL(10,2),
+        rows_returned INTEGER,
+        columns_returned INTEGER,
+        
+        -- Data Structure
+        column_names TEXT, -- JSON array of column names
+        sample_data TEXT, -- JSON array of sample data rows
+        data_types TEXT, -- JSON array of data types
+        
+        -- Results Summary
+        has_data BOOLEAN,
+        first_row TEXT, -- JSON array of first row data
+        total_data_points INTEGER,
+        
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        
+        FOREIGN KEY (run_id) REFERENCES Analytics_Runs(run_id) ON DELETE CASCADE
+    );
+
+    -- Test_Data_Execution_Log table for logging script executions
+    CREATE TABLE Test_Data_Execution_Log (
+        execution_id SERIAL PRIMARY KEY,
+        
+        -- Execution metadata
+        execution_timestamp TIMESTAMP NOT NULL,
+        script_name VARCHAR(255),
+        script_version VARCHAR(50),
+        execution_type VARCHAR(100), -- e.g., 'create_testdata', 'data_generation', 'schema_setup'
+        
+        -- Execution details
+        database_host VARCHAR(255),
+        database_name VARCHAR(255),
+        total_operations INTEGER,
+        successful_operations INTEGER,
+        failed_operations INTEGER,
+        
+        -- Performance metrics
+        total_execution_time_ms DECIMAL(10,2),
+        average_operation_time_ms DECIMAL(10,2),
+        memory_usage_mb DECIMAL(10,2),
+        
+        -- Data generation statistics (if applicable)
+        records_created INTEGER,
+        tables_affected TEXT, -- JSON array of affected table names
+        data_volume_mb DECIMAL(10,2),
+        
+        -- Status and results
+        execution_status VARCHAR(50), -- 'success', 'partial_success', 'failure'
+        error_count INTEGER DEFAULT 0,
+        warning_count INTEGER DEFAULT 0,
+        
+        -- Detailed logs
+        execution_log TEXT, -- Detailed execution log/output
+        error_details TEXT, -- Error messages and stack traces
+        configuration_used TEXT, -- JSON of configuration parameters used
+        
+        -- Additional metadata
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        environment_info TEXT -- JSON with system/environment details
+    );
+
     -- Create indexes for better performance
-    CREATE INDEX idx_categories_parent ON Categories(parent_category_id);
     CREATE INDEX idx_categories_name ON Categories(category_name);
     CREATE INDEX idx_products_category ON Products(category_id);
     CREATE INDEX idx_products_brand ON Products(brand);
@@ -108,6 +216,19 @@ def get_schema_sql():
     CREATE INDEX idx_order_items_product ON Order_Items(product_id);
     CREATE INDEX idx_associations_product_a ON Product_Associations(product_a_id);
     CREATE INDEX idx_associations_product_b ON Product_Associations(product_b_id);
+
+    -- Analytics table indexes
+    CREATE INDEX idx_analytics_runs_timestamp ON Analytics_Runs(export_timestamp);
+    CREATE INDEX idx_analytics_runs_database ON Analytics_Runs(database_name);
+    CREATE INDEX idx_analytics_runs_version ON Analytics_Runs(script_version);
+    CREATE INDEX idx_query_results_run_id ON Analytics_Query_Results(run_id);
+    CREATE INDEX idx_query_results_name ON Analytics_Query_Results(query_name);
+    CREATE INDEX idx_query_results_timestamp ON Analytics_Query_Results(execution_timestamp);
+    CREATE INDEX idx_query_results_performance ON Analytics_Query_Results(response_time_ms, rows_returned);
+    CREATE INDEX idx_execution_log_timestamp ON Test_Data_Execution_Log(execution_timestamp);
+    CREATE INDEX idx_execution_log_script ON Test_Data_Execution_Log(script_name);
+    CREATE INDEX idx_execution_log_status ON Test_Data_Execution_Log(execution_status);
+    CREATE INDEX idx_execution_log_type ON Test_Data_Execution_Log(execution_type);
 
     -- Create update timestamp trigger function
     CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -176,6 +297,29 @@ def get_sample_data_sql():
         (1, 3, 15),  -- iPhone often bought with MacBook
         (1, 5, 8),   -- iPhone often bought with T-Shirt
         (3, 1, 15);  -- MacBook often bought with iPhone
+
+    -- Insert sample analytics run
+    INSERT INTO Analytics_Runs (
+        export_timestamp, database_host, database_name, total_queries_executed,
+        successful_queries, execution_order, script_version, description,
+        display_limit, sample_data_limit, total_execution_time_ms,
+        total_rows_queried, average_response_time_ms, success_rate_percent
+    ) VALUES (
+        CURRENT_TIMESTAMP, 'localhost', 'test_data', 4, 4,
+        '["favorite_products", "favorite_categories", "customer_product_patterns", "product_associations"]',
+        '2.0_flexible', 'Sample analytics run with test data',
+        5, 3, 1000.0, 1000, 250.0, 100.0
+    );
+
+    -- Insert sample execution log
+    INSERT INTO Test_Data_Execution_Log (
+        execution_timestamp, script_name, script_version, execution_type,
+        database_host, database_name, total_operations, successful_operations,
+        failed_operations, execution_status, records_created
+    ) VALUES (
+        CURRENT_TIMESTAMP, 'setup_testschema.py', '1.0', 'schema_setup',
+        'localhost', 'test_data', 1, 1, 0, 'success', 23
+    );
     """
 
 def create_connection(db_config):
@@ -211,11 +355,17 @@ def verify_schema(connection):
         tables = cursor.fetchall()
         cursor.close()
         
-        expected_tables = {'categories', 'customers', 'orders', 'order_items', 'products', 'product_associations'}
+        expected_tables = {
+            'categories', 'customers', 'orders', 'order_items', 
+            'products', 'product_associations', 'analytics_runs', 
+            'analytics_query_results', 'test_data_execution_log'
+        }
         created_tables = {table[0] for table in tables}
         
         if expected_tables.issubset(created_tables):
-            print(f"✅ All tables created successfully: {', '.join(sorted(created_tables))}")
+            print(f"✅ All tables created successfully:")
+            print(f"   Core tables: categories, customers, orders, order_items, products, product_associations")
+            print(f"   Analytics tables: analytics_runs, analytics_query_results, test_data_execution_log")
             return True
         else:
             missing = expected_tables - created_tables
@@ -226,8 +376,34 @@ def verify_schema(connection):
         print(f"❌ Error verifying schema: {e}")
         return False
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description='Setup database schema with optional test data creation',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  python setup_testschema.py                    # Create schema only
+  python setup_testschema.py --create-testdata  # Create schema with sample data
+  python setup_testschema.py -h                 # Show this help
+        '''
+    )
+    
+    parser.add_argument(
+        '--create-testdata', 
+        action='store_true',
+        help='Create sample test data after schema creation (default: False)'
+    )
+    
+    return parser.parse_args()
+
 def main():
+    args = parse_arguments()
+    
     print("🚀 Starting database schema setup...")
+    if args.create_testdata:
+        print("📊 Test data creation: ENABLED")
+    else:
+        print("📊 Test data creation: DISABLED (use --create-testdata to enable)")
     
     db_config = load_environment()
     print(f"📡 Connecting to database: {db_config['host']}:{db_config['port']}/{db_config['database']}")
@@ -237,21 +413,33 @@ def main():
         sys.exit(1)
     
     try:
+        # Always create the schema
         if not execute_sql(connection, get_schema_sql(), "Schema creation"):
             sys.exit(1)
 
         if not verify_schema(connection):
             sys.exit(1)
-            
-        response = input("\n💡 Would you like to insert sample data? (y/N): ").strip().lower()
-        if response in ['y', 'yes']:
+        
+        # Create test data if requested
+        if args.create_testdata:
+            print("\n📊 Creating sample test data...")
             if execute_sql(connection, get_sample_data_sql(), "Sample data insertion"):
                 print("✅ Sample data inserted successfully")
             else:
                 print("⚠️  Schema created but sample data insertion failed")
+                sys.exit(1)
+        else:
+            print("\n💡 To create sample data later, run:")
+            print("   python setup_testschema.py --create-testdata")
         
         print("\n🎉 Database setup completed successfully!")
         print(f"📊 You can now connect to your database at {db_config['host']}:{db_config['port']}")
+        
+        # Show what was created
+        print("\n📋 Created tables:")
+        print("   • Core e-commerce tables: Categories, Products, Customers, Orders, Order_Items, Product_Associations")
+        print("   • Analytics tables: Analytics_Runs, Analytics_Query_Results")
+        print("   • Logging table: Test_Data_Execution_Log")
         
     finally:
         connection.close()

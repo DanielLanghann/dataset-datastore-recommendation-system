@@ -1,0 +1,416 @@
+{
+  "export_metadata": {
+    "timestamp": "2025-08-16T16:50:59.438202",
+    "database_host": "localhost",
+    "database_name": "test_data",
+    "total_queries_executed": 4,
+    "successful_queries": 4,
+    "execution_order": [
+      "favorite_products",
+      "favorite_categories",
+      "customer_product_patterns",
+      "product_associations"
+    ],
+    "script_version": "2.0_flexible_db",
+    "description": "Flexible business analytics queries with database storage",
+    "analytics_run_id": 4
+  },
+  "configuration": {
+    "display_limit": 5,
+    "sample_data_limit": 3,
+    "export_filename_template": "custom_analytics_results_{timestamp}.json",
+    "timestamp_format": "%Y%m%d_%H%M%S"
+  },
+  "performance_summary": {
+    "total_execution_time_ms": 3345.6,
+    "total_rows_queried": 1926053,
+    "average_response_time_ms": 836.4,
+    "success_rate_percent": 100.0
+  },
+  "query_results": {
+    "favorite_products": {
+      "query_info": {
+        "name": "favorite_products",
+        "description": "Most popular products by total quantity sold from completed/shipped orders",
+        "dataset_reference": "dataset 10",
+        "sql": "SELECT p.product_id, p.product_name, p.brand, c.category_name, \n               SUM(oi.quantity) as total_quantity_sold,\n               COUNT(DISTINCT oi.order_id) as number_of_orders,\n               SUM(oi.total_price) as total_revenue\n        FROM Products p\n        JOIN Categories c ON p.category_id = c.category_id\n        JOIN Order_Items oi ON p.product_id = oi.product_id\n        JOIN Orders o ON oi.order_id = o.order_id\n        WHERE o.status IN ('completed', 'shipped') -- Nur abgeschlossene/versendete Bestellungen\n        GROUP BY p.product_id, p.product_name, p.brand, c.category_name\n        ORDER BY total_quantity_sold DESC;",
+        "affected_tables": [
+          "CATEGORIES",
+          "ORDERS",
+          "ORDER_ITEMS",
+          "PRODUCTS"
+        ],
+        "execution_timestamp": "2025-08-16T16:50:52.749697",
+        "execution_order": 1
+      },
+      "performance_metrics": {
+        "response_time_ms": 303.97,
+        "response_time_seconds": 0.304,
+        "rows_returned": 152869,
+        "columns_returned": 7
+      },
+      "data_structure": {
+        "column_names": [
+          "product_id",
+          "product_name",
+          "brand",
+          "category_name",
+          "total_quantity_sold",
+          "number_of_orders",
+          "total_revenue"
+        ],
+        "sample_data": [
+          [
+            87741,
+            "Simply Partner",
+            "Nike",
+            "Write National",
+            25,
+            7,
+            5839.01
+          ],
+          [
+            74585,
+            "Treat Base",
+            "Samsung",
+            "Admit Subject",
+            24,
+            5,
+            5323.06
+          ],
+          [
+            98701,
+            "What Relationship",
+            "Generic",
+            "Discuss Project",
+            24,
+            6,
+            6626.6
+          ]
+        ],
+        "data_types": [
+          "int",
+          "str",
+          "str",
+          "str",
+          "int",
+          "int",
+          "Decimal"
+        ]
+      },
+      "results_summary": {
+        "has_data": true,
+        "first_row": [
+          87741,
+          "Simply Partner",
+          "Nike",
+          "Write National",
+          25,
+          7,
+          5839.01
+        ],
+        "total_data_points": 1070083
+      }
+    },
+    "favorite_categories": {
+      "query_info": {
+        "name": "favorite_categories",
+        "description": "Most popular product categories by total quantity sold",
+        "dataset_reference": "dataset 8",
+        "sql": "SELECT\n            c.category_id,\n            c.category_name,\n            c.description,\n            SUM(oi.quantity) as total_quantity_sold,\n            COUNT(DISTINCT oi.order_id) as number_of_orders,\n            COUNT(DISTINCT p.product_id) as number_of_products,\n            SUM(oi.total_price) as total_revenue,\n            ROUND(AVG(oi.unit_price), 2) as avg_unit_price\n        FROM Categories c\n        JOIN Products p ON c.category_id = p.category_id\n        JOIN Order_Items oi ON p.product_id = oi.product_id\n        JOIN Orders o ON oi.order_id = o.order_id\n        WHERE o.status IN ('completed', 'shipped')\n        GROUP BY c.category_id, c.category_name, c.description\n        ORDER BY total_quantity_sold DESC;",
+        "affected_tables": [
+          "CATEGORIES",
+          "ORDERS",
+          "ORDER_ITEMS",
+          "PRODUCTS"
+        ],
+        "execution_timestamp": "2025-08-16T16:50:52.914857",
+        "execution_order": 2
+      },
+      "performance_metrics": {
+        "response_time_ms": 155.45,
+        "response_time_seconds": 0.1554,
+        "rows_returned": 3000,
+        "columns_returned": 8
+      },
+      "data_structure": {
+        "column_names": [
+          "category_id",
+          "category_name",
+          "description",
+          "total_quantity_sold",
+          "number_of_orders",
+          "number_of_products",
+          "total_revenue",
+          "avg_unit_price"
+        ],
+        "sample_data": [
+          [
+            1077,
+            "Far Right",
+            "Discover picture responsibility moment pattern audience. Woman firm learn.\nStreet analysis easy call actually stuff though.\nPlan include candidate face business specific power. West expect I foreign.",
+            533,
+            175,
+            113,
+            148712.0,
+            280.65
+          ],
+          [
+            1839,
+            "All Manage",
+            "Offer even for people thank find keep. Couple win cup. Wonder something maybe catch tough.",
+            527,
+            172,
+            122,
+            139702.34,
+            269.72
+          ],
+          [
+            1324,
+            "Throw Large",
+            "Much money health certain bit white tell. Account long with.\nThis visit learn these. Evening instead plan tax main.",
+            513,
+            174,
+            117,
+            132171.79,
+            256.37
+          ]
+        ],
+        "data_types": [
+          "int",
+          "str",
+          "str",
+          "int",
+          "int",
+          "int",
+          "Decimal",
+          "Decimal"
+        ]
+      },
+      "results_summary": {
+        "has_data": true,
+        "first_row": [
+          1077,
+          "Far Right",
+          "Discover picture responsibility moment pattern audience. Woman firm learn.\nStreet analysis easy call actually stuff though.\nPlan include candidate face business specific power. West expect I foreign.",
+          533,
+          175,
+          113,
+          148712.0,
+          280.65
+        ],
+        "total_data_points": 24000
+      }
+    },
+    "customer_product_patterns": {
+      "query_info": {
+        "name": "customer_product_patterns",
+        "description": "Customer purchasing patterns - how often each customer buys each product",
+        "dataset_reference": "dataset 10",
+        "sql": "SELECT\n            c.customer_id,\n            CONCAT(c.first_name, ' ', c.last_name) as customer_name,\n            c.email,\n            p.product_id,\n            p.product_name,\n            p.brand,\n            cat.category_name,\n            SUM(oi.quantity) as total_quantity_purchased,\n            COUNT(DISTINCT o.order_id) as number_of_orders,\n            SUM(oi.total_price) as total_spent_on_product,\n            ROUND(AVG(oi.unit_price), 2) as avg_unit_price,\n            MIN(o.order_date) as first_purchase_date,\n            MAX(o.order_date) as last_purchase_date\n        FROM Customers c\n        JOIN Orders o ON c.customer_id = o.customer_id\n        JOIN Order_Items oi ON o.order_id = oi.order_id\n        JOIN Products p ON oi.product_id = p.product_id\n        JOIN Categories cat ON p.category_id = cat.category_id\n        WHERE o.status IN ('completed', 'shipped')\n        GROUP BY\n            c.customer_id, c.first_name, c.last_name, c.email,\n            p.product_id, p.product_name, p.brand, cat.category_name\n        ORDER BY total_quantity_purchased DESC, customer_name ASC, p.product_name ASC;",
+        "affected_tables": [
+          "CATEGORIES",
+          "CUSTOMERS",
+          "ORDERS",
+          "ORDER_ITEMS",
+          "PRODUCTS"
+        ],
+        "execution_timestamp": "2025-08-16T16:50:53.811820",
+        "execution_order": 3
+      },
+      "performance_metrics": {
+        "response_time_ms": 889.79,
+        "response_time_seconds": 0.8898,
+        "rows_returned": 200554,
+        "columns_returned": 13
+      },
+      "data_structure": {
+        "column_names": [
+          "customer_id",
+          "customer_name",
+          "email",
+          "product_id",
+          "product_name",
+          "brand",
+          "category_name",
+          "total_quantity_purchased",
+          "number_of_orders",
+          "total_spent_on_product",
+          "avg_unit_price",
+          "first_purchase_date",
+          "last_purchase_date"
+        ],
+        "sample_data": [
+          [
+            42491,
+            "Aaron Acosta",
+            "user_42490_462364@testdata.com",
+            240056,
+            "Term For",
+            "Samsung",
+            "Action Cut",
+            5,
+            1,
+            2320.2,
+            464.04,
+            "2025-04-30T03:28:08.589374",
+            "2025-04-30T03:28:08.589374"
+          ],
+          [
+            82568,
+            "Aaron Adams",
+            "user_82567_146452@testdata.com",
+            167335,
+            "Be Speak",
+            "Nike",
+            "Entire Far",
+            5,
+            1,
+            394.45,
+            78.89,
+            "2025-08-12T19:42:25.750205",
+            "2025-08-12T19:42:25.750205"
+          ],
+          [
+            379079,
+            "Aaron Anderson",
+            "user_178439_390174@testdata.com",
+            44259,
+            "Myself General",
+            "Samsung",
+            "Trial Series",
+            5,
+            1,
+            853.35,
+            170.67,
+            "2025-02-14T21:47:49.333027",
+            "2025-02-14T21:47:49.333027"
+          ]
+        ],
+        "data_types": [
+          "int",
+          "str",
+          "str",
+          "int",
+          "str",
+          "str",
+          "str",
+          "int",
+          "int",
+          "Decimal",
+          "Decimal",
+          "datetime",
+          "datetime"
+        ]
+      },
+      "results_summary": {
+        "has_data": true,
+        "first_row": [
+          42491,
+          "Aaron Acosta",
+          "user_42490_462364@testdata.com",
+          240056,
+          "Term For",
+          "Samsung",
+          "Action Cut",
+          5,
+          1,
+          2320.2,
+          464.04,
+          "2025-04-30T03:28:08.589374",
+          "2025-04-30T03:28:08.589374"
+        ],
+        "total_data_points": 2607202
+      }
+    },
+    "product_associations": {
+      "query_info": {
+        "name": "product_associations",
+        "description": "Products that are frequently bought together - market basket analysis",
+        "dataset_reference": "dataset 13",
+        "sql": "SELECT\n            pa1.product_name as product_a,\n            pa1.brand as brand_a,\n            cat1.category_name as category_a,\n            pa2.product_name as product_b,\n            pa2.brand as brand_b,\n            cat2.category_name as category_b,\n            pa.frequency_count,\n            pa.last_calculated\n        FROM Product_Associations pa\n        JOIN Products pa1 ON pa.product_a_id = pa1.product_id\n        JOIN Products pa2 ON pa.product_b_id = pa2.product_id\n        JOIN Categories cat1 ON pa1.category_id = cat1.category_id\n        JOIN Categories cat2 ON pa2.category_id = cat2.category_id\n        ORDER BY pa.frequency_count DESC;",
+        "affected_tables": [
+          "CATEGORIES",
+          "PRODUCTS",
+          "PRODUCT_ASSOCIATIONS"
+        ],
+        "execution_timestamp": "2025-08-16T16:50:55.853225",
+        "execution_order": 4
+      },
+      "performance_metrics": {
+        "response_time_ms": 1996.39,
+        "response_time_seconds": 1.9964,
+        "rows_returned": 1569630,
+        "columns_returned": 8
+      },
+      "data_structure": {
+        "column_names": [
+          "product_a",
+          "brand_a",
+          "category_a",
+          "product_b",
+          "brand_b",
+          "category_b",
+          "frequency_count",
+          "last_calculated"
+        ],
+        "sample_data": [
+          [
+            "Mouth Structure",
+            "Nike",
+            "Often Key",
+            "Million At",
+            "HP",
+            "Hour Hand",
+            4,
+            "2025-08-16T14:50:17.595962"
+          ],
+          [
+            "Product Free",
+            "Nike",
+            "Since History",
+            "Woman Land",
+            "Microsoft",
+            "Open Fish",
+            4,
+            "2025-08-16T14:50:17.595962"
+          ],
+          [
+            "Themselves Own",
+            "Asus",
+            "Over Nice",
+            "Appear Front",
+            "Asus",
+            "Inside Land",
+            4,
+            "2025-08-16T14:50:17.595962"
+          ]
+        ],
+        "data_types": [
+          "str",
+          "str",
+          "str",
+          "str",
+          "str",
+          "str",
+          "int",
+          "datetime"
+        ]
+      },
+      "results_summary": {
+        "has_data": true,
+        "first_row": [
+          "Mouth Structure",
+          "Nike",
+          "Often Key",
+          "Million At",
+          "HP",
+          "Hour Hand",
+          4,
+          "2025-08-16T14:50:17.595962"
+        ],
+        "total_data_points": 12557040
+      }
+    }
+  }
+}
