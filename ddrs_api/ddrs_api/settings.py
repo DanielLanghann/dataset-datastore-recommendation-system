@@ -134,18 +134,58 @@ DATASTORE_ENCRYPTION_KEY = config("DATASTORE_ENCRYPTION_KEY")
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {message}",
+            "style": "{",
+        },
+        "simple": {
+            "format": "{levelname} {message}",
+            "style": "{",
+        },
+    },
     "handlers": {
+        "console": {
+            "level": "INFO",
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
         "file": {
             "level": "ERROR",
             "class": "logging.FileHandler",
             "filename": "datastore_errors.log",
+            "formatter": "verbose",
         },
     },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
+    },
     "loggers": {
+        "django": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
         "datastore_api.views": {
-            "handlers": ["file"],
-            "level": "ERROR",
-            "propagate": True,
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "authentication": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "dataset_api": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "matching_engine": {
+            "handlers": ["console", "file"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 }
@@ -153,7 +193,6 @@ LOGGING = {
 # Ollama
 OLLAMA_API_URL = config("OLLAMA_API_URL", default="http://localhost:11434")
 VALIDATE_OLLAMA_MODELS = config("VALIDATE_OLLAMA_MODELS", default=True, cast=bool)
-# fallback models when Ollama is unreachable (acts as safety net)
 FALLBACK_OLLAMA_MODELS = config(
     "FALLBACK_OLLAMA_MODELS", default="qwen3:8b", cast=Csv()
 )

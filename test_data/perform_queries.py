@@ -1,25 +1,46 @@
 #!/usr/bin/env python3
 """
-Product Analytics Query Performance Script
-Executes meaningful analytics queries to analyze product buying patterns
-and measures query execution times for performance analysis
+main_analytics.py
+Flexible Product Analytics Query Performance Script
+Imports queries from separate module and executes them in a configurable loop
+Now with database storage capability
 """
 
 import psycopg2
 import time
-from datetime import datetime, timedelta
+import json
+import re
+from datetime import datetime, date
+from decimal import Decimal
 from decouple import config
 from tabulate import tabulate
-import json
-from decimal import Decimal
+
+# Import our separate queries module
+from queries import BUSINESS_QUERIES, QUERY_CONFIG, get_query_list, get_all_queries
 
 
-class ProductAnalytics:
+class FlexibleProductAnalytics:
     def __init__(self, db_config):
         self.db_config = db_config
         self.connection = None
-        self.query_results = {}
-        self.performance_metrics = {}
+        self.results = {}
+        self.execution_order = []
+        self.analytics_run_id = None
+        self.execution_start_time = datetime.now()
+    
+    def json_serializer(self, obj):
+        """Custom JSON serializer for PostgreSQL data types"""
+        if isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        elif hasattr(obj, 'isoformat'):  # Handle other datetime-like objects
+            return obj.isoformat()
+        raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+    
+    def safe_json_dumps(self, obj):
+        """Safely serialize objects to JSON with custom serializer"""
+        return json.dumps(obj, default=self.json_serializer)
     
     def connect(self):
         """Connect to the database"""
@@ -36,511 +57,671 @@ class ProductAnalytics:
         if self.connection:
             self.connection.close()
     
-    def execute_query(self, query_name, query_sql, description=""):
-        """Execute a query and measure performance"""
-        print(f"\n🔍 Executing: {query_name}")
-        if description:
-            print(f"   Description: {description}")
+    def extract_tables_from_query(self, query_sql):
+        """Extract table names from SQL query using regex"""
+        # Remove comments and normalize whitespace
+        clean_query = re.sub(r'--.*?\n', '\n', query_sql)
+        clean_query = re.sub(r'/\*.*?\*/', '', clean_query, flags=re.DOTALL)
+        clean_query = re.sub(r'\s+', ' ', clean_query).upper()
+        
+        # Find table names after FROM and JOIN keywords
+        table_pattern = r'(?:FROM|JOIN)\s+([A-Z_][A-Z0-9_]*)'
+        matches = re.findall(table_pattern, clean_query)
+        
+        # Remove duplicates and sort
+        tables = sorted(list(set(matches)))
+        return tables
+    
+    def create_analytics_run(self, query_names=None):
+        """Create a new analytics run record and return the run_id"""
+        try:
+            cursor = self.connection.cursor()
+            
+            # Determine which queries will be executed
+            if query_names is None:
+                execution_order = list(get_all_queries().keys())
+                total_queries = len(execution_order)
+                description = f"Complete analytics run with all {total_queries} available queries"
+            else:
+                execution_order = query_names
+                total_queries = len(query_names)
+                description = f"Selective analytics run with {total_queries} specified queries: {', '.join(query_names)}"
+            
+            # Insert analytics run record
+            insert_query = """
+                INSERT INTO Analytics_Runs (
+                    export_timestamp, database_host, database_name, 
+                    total_queries_executed, successful_queries, execution_order,
+                    script_version, description, display_limit, sample_data_limit,
+                    export_filename_template, timestamp_format
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                ) RETURNING run_id
+            """
+            
+            values = (
+                self.execution_start_time,
+                self.db_config.get('host', 'unknown'),
+                self.db_config.get('database', 'unknown'),
+                total_queries,
+                0,  # Will be updated later
+                json.dumps(execution_order),
+                "2.0_flexible_db",
+                description,
+                QUERY_CONFIG.get('display_limit', 5),
+                QUERY_CONFIG.get('sample_data_limit', 3),
+                QUERY_CONFIG.get('export_filename_template', 'analytics_results_{timestamp}.json'),
+                QUERY_CONFIG.get('timestamp_format', '%Y%m%d_%H%M%S')
+            )
+            
+            cursor.execute(insert_query, values)
+            self.analytics_run_id = cursor.fetchone()[0]
+            self.connection.commit()
+            cursor.close()
+            
+            print(f"📋 Created analytics run #{self.analytics_run_id}: {description}")
+            return self.analytics_run_id
+            
+        except psycopg2.Error as e:
+            print(f"❌ Failed to create analytics run record: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return None
+    
+    def store_query_result(self, query_name, query_data, result_data):
+        """Store individual query result in Analytics_Query_Results table"""
+        if not self.analytics_run_id:
+            print(f"⚠️  No analytics run ID available, skipping storage for {query_name}")
+            return False
         
         try:
             cursor = self.connection.cursor()
             
-            # Measure execution time
+            # Prepare data for insertion
+            query_info = result_data['query_info']
+            performance_metrics = result_data['performance_metrics']
+            data_structure = result_data['data_structure']
+            results_summary = result_data['results_summary']
+            
+            # Handle error cases
+            error_occurred = 'error' in result_data and result_data['error']['occurred']
+            
+            insert_query = """
+                INSERT INTO Analytics_Query_Results (
+                    run_id, query_name, query_description, dataset_reference,
+                    sql_query, affected_tables, execution_timestamp, execution_order,
+                    response_time_ms, response_time_seconds, rows_returned, columns_returned,
+                    column_names, sample_data, data_types, has_data, first_row, total_data_points
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+            """
+            
+            values = (
+                self.analytics_run_id,
+                query_info['name'],
+                query_info['description'],
+                query_info['dataset_reference'],
+                query_info['sql'],
+                self.safe_json_dumps(query_info['affected_tables']),
+                datetime.fromisoformat(query_info['execution_timestamp'].replace('Z', '+00:00')) if 'T' in query_info['execution_timestamp'] else datetime.now(),
+                query_info['execution_order'],
+                performance_metrics['response_time_ms'] if not error_occurred else 0,
+                performance_metrics['response_time_seconds'] if not error_occurred else 0,
+                performance_metrics['rows_returned'] if not error_occurred else 0,
+                performance_metrics['columns_returned'] if not error_occurred else 0,
+                self.safe_json_dumps(data_structure['column_names']) if not error_occurred else json.dumps([]),
+                self.safe_json_dumps(data_structure['sample_data']) if not error_occurred else json.dumps([]),
+                self.safe_json_dumps(data_structure['data_types']) if not error_occurred else json.dumps([]),
+                results_summary['has_data'] if not error_occurred else False,
+                self.safe_json_dumps(results_summary['first_row']) if not error_occurred and results_summary['first_row'] else None,
+                results_summary['total_data_points'] if not error_occurred else 0
+            )
+            
+            cursor.execute(insert_query, values)
+            self.connection.commit()
+            cursor.close()
+            
+            print(f"   💾 Stored query result for {query_name} in database")
+            return True
+            
+        except psycopg2.Error as e:
+            print(f"   ❌ Failed to store query result for {query_name}: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return False
+        except Exception as e:
+            print(f"   ❌ Unexpected error storing {query_name}: {e}")
+            return False
+    
+    def update_analytics_run_summary(self):
+        """Update the analytics run with final summary information"""
+        if not self.analytics_run_id:
+            return False
+        
+        try:
+            cursor = self.connection.cursor()
+            
+            # Calculate summary statistics
+            successful_queries = len([k for k, v in self.results.items() 
+                                    if not ('error' in v and v['error']['occurred'])])
+            
+            total_execution_time_ms = sum([
+                v['performance_metrics']['response_time_ms'] 
+                for v in self.results.values() 
+                if 'performance_metrics' in v and 'error' not in v
+            ])
+            
+            total_rows_queried = sum([
+                v['performance_metrics']['rows_returned'] 
+                for v in self.results.values() 
+                if 'performance_metrics' in v and 'error' not in v
+            ])
+            
+            average_response_time_ms = total_execution_time_ms / max(successful_queries, 1)
+            success_rate_percent = (successful_queries / len(self.results) * 100) if self.results else 0
+            
+            # Create complete analytics JSON for backup
+            analytics_json = {
+                'export_metadata': {
+                    'timestamp': datetime.now().isoformat(),
+                    'database_host': self.db_config.get('host', 'unknown'),
+                    'database_name': self.db_config.get('database', 'unknown'),
+                    'total_queries_executed': len(self.results),
+                    'successful_queries': successful_queries,
+                    'execution_order': self.execution_order,
+                    'script_version': "2.0_flexible_db",
+                    'description': "Flexible business analytics queries with database storage"
+                },
+                'configuration': QUERY_CONFIG,
+                'performance_summary': {
+                    'total_execution_time_ms': total_execution_time_ms,
+                    'total_rows_queried': total_rows_queried,
+                    'average_response_time_ms': average_response_time_ms,
+                    'success_rate_percent': success_rate_percent
+                },
+                'query_results': self.results
+            }
+            
+            # Update analytics run record
+            update_query = """
+                UPDATE Analytics_Runs SET
+                    successful_queries = %s,
+                    total_execution_time_ms = %s,
+                    total_rows_queried = %s,
+                    average_response_time_ms = %s,
+                    success_rate_percent = %s,
+                    analytics_json = %s
+                WHERE run_id = %s
+            """
+            
+            values = (
+                successful_queries,
+                total_execution_time_ms,
+                total_rows_queried,
+                average_response_time_ms,
+                success_rate_percent,
+                self.safe_json_dumps(analytics_json),
+                self.analytics_run_id
+            )
+            
+            cursor.execute(update_query, values)
+            self.connection.commit()
+            cursor.close()
+            
+            print(f"📊 Updated analytics run #{self.analytics_run_id} with final summary")
+            print(f"   ✅ Successful queries: {successful_queries}/{len(self.results)}")
+            print(f"   ⏱️  Total execution time: {total_execution_time_ms:.2f}ms")
+            print(f"   📈 Success rate: {success_rate_percent:.1f}%")
+            
+            return True
+            
+        except psycopg2.Error as e:
+            print(f"❌ Failed to update analytics run summary: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return False
+    
+    def execute_query(self, query_name, query_data):
+        """Execute a single query and measure detailed performance"""
+        print(f"\n🔍 Executing: {query_name}")
+        print(f"   Description: {query_data['description']}")
+        print(f"   Dataset Reference: {query_data['dataset_reference']}")
+        
+        try:
+            cursor = self.connection.cursor()
+            
+            # Extract tables from query
+            affected_tables = self.extract_tables_from_query(query_data['sql'])
+            
+            # Measure execution time in milliseconds
             start_time = time.time()
-            cursor.execute(query_sql)
+            cursor.execute(query_data['sql'])
             results = cursor.fetchall()
             end_time = time.time()
             
-            execution_time = end_time - start_time
+            execution_time_ms = (end_time - start_time) * 1000
             
             # Get column names
             column_names = [desc[0] for desc in cursor.description] if cursor.description else []
             
             cursor.close()
             
-            # Store results and metrics
-            self.query_results[query_name] = {
-                'results': results,
-                'columns': column_names,
-                'row_count': len(results),
-                'description': description
+            # Store comprehensive results
+            result_data = {
+                'query_info': {
+                    'name': query_name,
+                    'description': query_data['description'],
+                    'dataset_reference': query_data['dataset_reference'],
+                    'sql': query_data['sql'].strip(),
+                    'affected_tables': affected_tables,
+                    'execution_timestamp': datetime.now().isoformat(),
+                    'execution_order': len(self.execution_order) + 1
+                },
+                'performance_metrics': {
+                    'response_time_ms': round(execution_time_ms, 2),
+                    'response_time_seconds': round(execution_time_ms / 1000, 4),
+                    'rows_returned': len(results),
+                    'columns_returned': len(column_names)
+                },
+                'data_structure': {
+                    'column_names': column_names,
+                    'sample_data': results[:QUERY_CONFIG['sample_data_limit']] if results else [],
+                    'data_types': [str(type(col).__name__) if results and col is not None else 'NoneType' 
+                                 for col in (results[0] if results else [])]
+                },
+                'results_summary': {
+                    'has_data': len(results) > 0,
+                    'first_row': list(results[0]) if results else None,
+                    'total_data_points': len(results) * len(column_names) if results else 0
+                }
             }
             
-            self.performance_metrics[query_name] = {
-                'execution_time': execution_time,
-                'row_count': len(results),
-                'timestamp': datetime.now()
-            }
+            # Convert results to JSON-serializable format immediately
+            if results:
+                # Convert each row to handle Decimal and datetime objects
+                serializable_results = []
+                for row in results[:QUERY_CONFIG['sample_data_limit']]:
+                    serializable_row = []
+                    for item in row:
+                        if isinstance(item, Decimal):
+                            serializable_row.append(float(item))
+                        elif isinstance(item, (datetime, date)):
+                            serializable_row.append(item.isoformat())
+                        else:
+                            serializable_row.append(item)
+                    serializable_results.append(tuple(serializable_row))
+                
+                result_data['data_structure']['sample_data'] = serializable_results
+                
+                # Convert first row as well
+                if result_data['results_summary']['first_row']:
+                    first_row_serializable = []
+                    for item in result_data['results_summary']['first_row']:
+                        if isinstance(item, Decimal):
+                            first_row_serializable.append(float(item))
+                        elif isinstance(item, (datetime, date)):
+                            first_row_serializable.append(item.isoformat())
+                        else:
+                            first_row_serializable.append(item)
+                    result_data['results_summary']['first_row'] = first_row_serializable
             
-            print(f"   ⏱️  Execution time: {execution_time:.4f}s")
+            self.results[query_name] = result_data
+            
+            # Track execution order
+            self.execution_order.append(query_name)
+            
+            # Store in database
+            self.store_query_result(query_name, query_data, result_data)
+            
+            print(f"   ⏱️  Response time: {execution_time_ms:.2f}ms")
             print(f"   📊 Rows returned: {len(results):,}")
+            print(f"   🗂️  Tables queried: {', '.join(affected_tables)}")
             
-            return results, column_names, execution_time
+            return True
             
         except psycopg2.Error as e:
             print(f"   ❌ Query failed: {e}")
-            return None, None, None
+            
+            # Store error information
+            error_data = {
+                'query_info': {
+                    'name': query_name,
+                    'description': query_data['description'],
+                    'dataset_reference': query_data['dataset_reference'],
+                    'sql': query_data['sql'].strip(),
+                    'affected_tables': self.extract_tables_from_query(query_data['sql']),
+                    'execution_timestamp': datetime.now().isoformat(),
+                    'execution_order': len(self.execution_order) + 1
+                },
+                'performance_metrics': {
+                    'response_time_ms': 0,
+                    'response_time_seconds': 0,
+                    'rows_returned': 0,
+                    'columns_returned': 0
+                },
+                'data_structure': {
+                    'column_names': [],
+                    'sample_data': [],
+                    'data_types': []
+                },
+                'results_summary': {
+                    'has_data': False,
+                    'first_row': None,
+                    'total_data_points': 0
+                },
+                'error': {
+                    'occurred': True,
+                    'message': str(e),
+                    'error_type': type(e).__name__
+                }
+            }
+            
+            self.results[query_name] = error_data
+            self.execution_order.append(query_name)
+            
+            # Still try to store error information
+            self.store_query_result(query_name, query_data, error_data)
+            
+            return False
     
-    def display_results(self, query_name, limit=10):
+    def execute_queries_in_loop(self, query_names=None, skip_on_error=False):
+        """
+        Execute queries in a flexible loop with database storage
+        
+        Args:
+            query_names (list): Specific queries to run. If None, runs all queries
+            skip_on_error (bool): Whether to continue if a query fails
+        """
+        print("🚀 Starting Flexible Query Execution Loop with Database Storage\n")
+        print("=" * 70)
+        
+        # Create analytics run record
+        if not self.create_analytics_run(query_names):
+            print("❌ Failed to create analytics run record")
+            return False
+        
+        # Determine which queries to run
+        if query_names is None:
+            queries_to_run = get_all_queries()
+            print(f"📋 Executing ALL {len(queries_to_run)} available queries")
+        else:
+            # Validate query names
+            available_queries = get_query_list()
+            invalid_queries = [q for q in query_names if q not in available_queries]
+            
+            if invalid_queries:
+                print(f"❌ Invalid query names: {invalid_queries}")
+                print(f"✅ Available queries: {available_queries}")
+                return False
+            
+            queries_to_run = {name: BUSINESS_QUERIES[name] for name in query_names}
+            print(f"📋 Executing {len(queries_to_run)} selected queries: {list(queries_to_run.keys())}")
+        
+        print(f"⚙️  Skip on error: {'Yes' if skip_on_error else 'No'}")
+        print(f"💾 Database storage: Analytics Run #{self.analytics_run_id}")
+        print("=" * 70)
+        
+        # Execute queries in loop
+        successful_queries = 0
+        failed_queries = 0
+        
+        for i, (query_name, query_data) in enumerate(queries_to_run.items(), 1):
+            print(f"\n[{i}/{len(queries_to_run)}] Processing: {query_name}")
+            
+            success = self.execute_query(query_name, query_data)
+            
+            if success:
+                successful_queries += 1
+                print(f"   ✅ Query completed successfully")
+            else:
+                failed_queries += 1
+                print(f"   ❌ Query failed")
+                
+                if not skip_on_error:
+                    print(f"   🛑 Stopping execution due to error (skip_on_error=False)")
+                    break
+                else:
+                    print(f"   ⏭️  Continuing to next query (skip_on_error=True)")
+        
+        # Update analytics run with final summary
+        self.update_analytics_run_summary()
+        
+        # Execution summary
+        print("\n" + "=" * 70)
+        print("📊 EXECUTION LOOP SUMMARY")
+        print("=" * 70)
+        print(f"✅ Successful queries: {successful_queries}")
+        print(f"❌ Failed queries: {failed_queries}")
+        print(f"📋 Total attempted: {len(self.execution_order)}")
+        print(f"🔄 Execution order: {' → '.join(self.execution_order)}")
+        print(f"💾 Results stored in Analytics Run #{self.analytics_run_id}")
+        
+        return successful_queries > 0
+    
+    def display_results(self, query_name=None, limit=None):
         """Display query results in a formatted table"""
-        if query_name not in self.query_results:
-            print(f"❌ No results found for query: {query_name}")
-            return
+        if limit is None:
+            limit = QUERY_CONFIG['display_limit']
         
-        result_data = self.query_results[query_name]
-        results = result_data['results']
-        columns = result_data['columns']
+        # Display specific query or all queries
+        queries_to_display = [query_name] if query_name else list(self.results.keys())
         
-        print(f"\n📊 Results for {query_name}:")
-        print(f"   Total rows: {len(results):,}")
-        
-        if not results:
-            print("   No data found")
-            return
-        
-        # Show limited results
-        display_results = results[:limit]
-        if len(results) > limit:
-            print(f"   Showing first {limit} rows:")
-        
-        print(tabulate(display_results, headers=columns, tablefmt="grid", floatfmt=".2f"))
-        
-        if len(results) > limit:
-            print(f"   ... and {len(results) - limit} more rows")
-    
-    def run_product_cooccurrence_analysis(self):
-        """Analyze which products are frequently bought together"""
-        
-        # Query 1: Most frequent product pairs in same orders
-        query1 = """
-        WITH product_pairs AS (
-            SELECT 
-                CASE WHEN oi1.product_id < oi2.product_id THEN oi1.product_id ELSE oi2.product_id END as product_a_id,
-                CASE WHEN oi1.product_id < oi2.product_id THEN oi2.product_id ELSE oi1.product_id END as product_b_id,
-                COUNT(DISTINCT oi1.order_id) as times_bought_together,
-                SUM(oi1.quantity * oi2.quantity) as total_quantity_pairs,
-                AVG(oi1.unit_price + oi2.unit_price) as avg_combined_price
-            FROM order_items oi1
-            JOIN order_items oi2 ON oi1.order_id = oi2.order_id
-            WHERE oi1.product_id != oi2.product_id
-            GROUP BY 
-                CASE WHEN oi1.product_id < oi2.product_id THEN oi1.product_id ELSE oi2.product_id END,
-                CASE WHEN oi1.product_id < oi2.product_id THEN oi2.product_id ELSE oi1.product_id END
-            HAVING COUNT(DISTINCT oi1.order_id) >= 3
-        )
-        SELECT 
-            p1.product_name as product_a,
-            p2.product_name as product_b,
-            p1.brand as brand_a,
-            p2.brand as brand_b,
-            pp.times_bought_together,
-            pp.total_quantity_pairs,
-            pp.avg_combined_price,
-            ROUND((pp.times_bought_together::decimal / 
-                  (SELECT COUNT(DISTINCT order_id) FROM orders) * 100), 2) as percentage_of_orders
-        FROM product_pairs pp
-        JOIN products p1 ON pp.product_a_id = p1.product_id
-        JOIN products p2 ON pp.product_b_id = p2.product_id
-        ORDER BY pp.times_bought_together DESC, pp.avg_combined_price DESC
-        LIMIT 20
-        """
-        
-        self.execute_query(
-            "frequent_product_pairs",
-            query1,
-            "Products most frequently bought together in the same order"
-        )
-    
-    def run_market_basket_analysis(self):
-        """Advanced market basket analysis with support and confidence metrics"""
-        
-        # Query 2: Market basket analysis with support, confidence, and lift
-        query2 = """
-        WITH order_stats AS (
-            SELECT COUNT(DISTINCT order_id) as total_orders FROM orders
-        ),
-        product_support AS (
-            SELECT 
-                product_id,
-                COUNT(DISTINCT order_id) as product_orders,
-                COUNT(DISTINCT order_id)::decimal / (SELECT total_orders FROM order_stats) as support
-            FROM order_items
-            GROUP BY product_id
-        ),
-        product_pairs AS (
-            SELECT 
-                oi1.product_id as product_a,
-                oi2.product_id as product_b,
-                COUNT(DISTINCT oi1.order_id) as pair_orders
-            FROM order_items oi1
-            JOIN order_items oi2 ON oi1.order_id = oi2.order_id
-            WHERE oi1.product_id < oi2.product_id
-            GROUP BY oi1.product_id, oi2.product_id
-            HAVING COUNT(DISTINCT oi1.order_id) >= 2
-        )
-        SELECT 
-            p1.product_name as product_a,
-            p2.product_name as product_b,
-            pp.pair_orders,
-            ROUND(pp.pair_orders::decimal / (SELECT total_orders FROM order_stats) * 100, 2) as support_percent,
-            ROUND(pp.pair_orders::decimal / ps1.product_orders * 100, 2) as confidence_a_to_b,
-            ROUND(pp.pair_orders::decimal / ps2.product_orders * 100, 2) as confidence_b_to_a,
-            ROUND(
-                (pp.pair_orders::decimal / (SELECT total_orders FROM order_stats)) / 
-                (ps1.support * ps2.support), 2
-            ) as lift
-        FROM product_pairs pp
-        JOIN products p1 ON pp.product_a = p1.product_id
-        JOIN products p2 ON pp.product_b = p2.product_id
-        JOIN product_support ps1 ON pp.product_a = ps1.product_id
-        JOIN product_support ps2 ON pp.product_b = ps2.product_id
-        WHERE pp.pair_orders >= 3
-        ORDER BY lift DESC, support_percent DESC
-        LIMIT 15
-        """
-        
-        self.execute_query(
-            "market_basket_analysis",
-            query2,
-            "Market basket analysis with support, confidence, and lift metrics"
-        )
-    
-    def run_category_cross_selling_analysis(self):
-        """Analyze cross-selling patterns between product categories"""
-        
-        # Query 3: Category cross-selling analysis
-        query3 = """
-        WITH category_pairs AS (
-            SELECT 
-                c1.category_name as category_a,
-                c2.category_name as category_b,
-                COUNT(DISTINCT oi1.order_id) as orders_with_both,
-                SUM(oi1.quantity + oi2.quantity) as total_items,
-                AVG(oi1.unit_price + oi2.unit_price) as avg_combined_price,
-                COUNT(*) as total_combinations
-            FROM order_items oi1
-            JOIN order_items oi2 ON oi1.order_id = oi2.order_id
-            JOIN products p1 ON oi1.product_id = p1.product_id
-            JOIN products p2 ON oi2.product_id = p2.product_id
-            JOIN categories c1 ON p1.category_id = c1.category_id
-            JOIN categories c2 ON p2.category_id = c2.category_id
-            WHERE c1.category_id != c2.category_id
-            GROUP BY c1.category_name, c2.category_name
-            HAVING COUNT(DISTINCT oi1.order_id) >= 2
-        )
-        SELECT 
-            category_a,
-            category_b,
-            orders_with_both,
-            total_items,
-            ROUND(avg_combined_price, 2) as avg_combined_price,
-            total_combinations,
-            ROUND(orders_with_both::decimal / 
-                  (SELECT COUNT(DISTINCT order_id) FROM orders) * 100, 2) as cross_sell_rate
-        FROM category_pairs
-        ORDER BY orders_with_both DESC, cross_sell_rate DESC
-        LIMIT 20
-        """
-        
-        self.execute_query(
-            "category_cross_selling",
-            query3,
-            "Cross-selling patterns between different product categories"
-        )
-    
-    def run_seasonal_product_patterns(self):
-        """Analyze seasonal buying patterns and product combinations"""
-        
-        # Query 4: Seasonal patterns in product combinations
-        query4 = """
-        WITH monthly_pairs AS (
-            SELECT 
-                DATE_TRUNC('month', o.order_date) as order_month,
-                p1.product_name as product_a,
-                p2.product_name as product_b,
-                COUNT(DISTINCT o.order_id) as monthly_combinations,
-                SUM(oi1.quantity + oi2.quantity) as monthly_quantity,
-                AVG(oi1.unit_price + oi2.unit_price) as avg_monthly_price
-            FROM orders o
-            JOIN order_items oi1 ON o.order_id = oi1.order_id
-            JOIN order_items oi2 ON o.order_id = oi2.order_id
-            JOIN products p1 ON oi1.product_id = p1.product_id
-            JOIN products p2 ON oi2.product_id = p2.product_id
-            WHERE oi1.product_id < oi2.product_id
-                AND o.order_date >= CURRENT_DATE - INTERVAL '12 months'
-            GROUP BY DATE_TRUNC('month', o.order_date), p1.product_name, p2.product_name
-            HAVING COUNT(DISTINCT o.order_id) >= 2
-        )
-        SELECT 
-            TO_CHAR(order_month, 'YYYY-MM') as month,
-            product_a,
-            product_b,
-            monthly_combinations,
-            monthly_quantity,
-            ROUND(avg_monthly_price, 2) as avg_price,
-            RANK() OVER (PARTITION BY order_month ORDER BY monthly_combinations DESC) as rank_in_month
-        FROM monthly_pairs
-        WHERE RANK() OVER (PARTITION BY order_month ORDER BY monthly_combinations DESC) <= 3
-        ORDER BY order_month DESC, monthly_combinations DESC
-        """
-        
-        self.execute_query(
-            "seasonal_patterns",
-            query4,
-            "Top 3 product combinations per month over the last year"
-        )
-    
-    def run_customer_segment_analysis(self):
-        """Analyze product combinations by customer segments"""
-        
-        # Query 5: Customer segment analysis
-        query5 = """
-        WITH customer_segments AS (
-            SELECT 
-                c.customer_id,
-                c.first_name || ' ' || c.last_name as customer_name,
-                COUNT(DISTINCT o.order_id) as total_orders,
-                SUM(o.total_amount) as total_spent,
-                AVG(o.total_amount) as avg_order_value,
-                CASE 
-                    WHEN SUM(o.total_amount) >= 2000 THEN 'High Value'
-                    WHEN SUM(o.total_amount) >= 500 THEN 'Medium Value'
-                    ELSE 'Low Value'
-                END as customer_segment
-            FROM customers c
-            LEFT JOIN orders o ON c.customer_id = o.customer_id
-            GROUP BY c.customer_id, c.first_name, c.last_name
-        ),
-        segment_product_pairs AS (
-            SELECT 
-                cs.customer_segment,
-                p1.product_name as product_a,
-                p2.product_name as product_b,
-                COUNT(DISTINCT oi1.order_id) as combinations_in_segment,
-                AVG(oi1.unit_price + oi2.unit_price) as avg_combined_price
-            FROM customer_segments cs
-            JOIN orders o ON cs.customer_id = o.customer_id
-            JOIN order_items oi1 ON o.order_id = oi1.order_id
-            JOIN order_items oi2 ON o.order_id = oi2.order_id
-            JOIN products p1 ON oi1.product_id = p1.product_id
-            JOIN products p2 ON oi2.product_id = p2.product_id
-            WHERE oi1.product_id < oi2.product_id
-            GROUP BY cs.customer_segment, p1.product_name, p2.product_name
-            HAVING COUNT(DISTINCT oi1.order_id) >= 2
-        )
-        SELECT 
-            customer_segment,
-            product_a,
-            product_b,
-            combinations_in_segment,
-            ROUND(avg_combined_price, 2) as avg_combined_price,
-            RANK() OVER (PARTITION BY customer_segment ORDER BY combinations_in_segment DESC) as rank_in_segment
-        FROM segment_product_pairs
-        WHERE RANK() OVER (PARTITION BY customer_segment ORDER BY combinations_in_segment DESC) <= 5
-        ORDER BY customer_segment, combinations_in_segment DESC
-        """
-        
-        self.execute_query(
-            "customer_segment_analysis",
-            query5,
-            "Top 5 product combinations by customer value segments"
-        )
-    
-    def run_brand_affinity_analysis(self):
-        """Analyze brand affinity and cross-brand purchasing"""
-        
-        # Query 6: Brand affinity analysis
-        query6 = """
-        WITH brand_combinations AS (
-            SELECT 
-                p1.brand as brand_a,
-                p2.brand as brand_b,
-                COUNT(DISTINCT oi1.order_id) as orders_with_both_brands,
-                COUNT(*) as total_item_combinations,
-                AVG(oi1.unit_price + oi2.unit_price) as avg_combined_price,
-                SUM(oi1.quantity + oi2.quantity) as total_quantities
-            FROM order_items oi1
-            JOIN order_items oi2 ON oi1.order_id = oi2.order_id
-            JOIN products p1 ON oi1.product_id = p1.product_id
-            JOIN products p2 ON oi2.product_id = p2.product_id
-            WHERE p1.brand != p2.brand
-                AND p1.brand IS NOT NULL 
-                AND p2.brand IS NOT NULL
-            GROUP BY p1.brand, p2.brand
-            HAVING COUNT(DISTINCT oi1.order_id) >= 2
-        ),
-        brand_stats AS (
-            SELECT 
-                brand_a,
-                brand_b,
-                orders_with_both_brands,
-                total_item_combinations,
-                ROUND(avg_combined_price, 2) as avg_combined_price,
-                total_quantities,
-                ROUND(orders_with_both_brands::decimal / 
-                      (SELECT COUNT(DISTINCT order_id) FROM orders) * 100, 2) as cross_brand_rate
-            FROM brand_combinations
-        )
-        SELECT 
-            brand_a,
-            brand_b,
-            orders_with_both_brands,
-            total_item_combinations,
-            avg_combined_price,
-            total_quantities,
-            cross_brand_rate,
-            CASE 
-                WHEN cross_brand_rate >= 5 THEN 'High Affinity'
-                WHEN cross_brand_rate >= 2 THEN 'Medium Affinity'
-                ELSE 'Low Affinity'
-            END as affinity_level
-        FROM brand_stats
-        ORDER BY orders_with_both_brands DESC, cross_brand_rate DESC
-        LIMIT 15
-        """
-        
-        self.execute_query(
-            "brand_affinity_analysis",
-            query6,
-            "Cross-brand purchasing patterns and brand affinity analysis"
-        )
-    
-    def run_high_value_combinations(self):
-        """Find the most valuable product combinations"""
-        
-        # Query 7: High-value product combinations
-        query7 = """
-        WITH valuable_combinations AS (
-            SELECT 
-                p1.product_name as product_a,
-                p2.product_name as product_b,
-                p1.price + p2.price as theoretical_combined_price,
-                COUNT(DISTINCT oi1.order_id) as times_bought_together,
-                SUM(oi1.unit_price + oi2.unit_price) as total_revenue,
-                AVG(oi1.unit_price + oi2.unit_price) as avg_actual_combined_price,
-                SUM(oi1.quantity + oi2.quantity) as total_units_sold,
-                MIN(oi1.unit_price + oi2.unit_price) as min_combined_price,
-                MAX(oi1.unit_price + oi2.unit_price) as max_combined_price
-            FROM order_items oi1
-            JOIN order_items oi2 ON oi1.order_id = oi2.order_id
-            JOIN products p1 ON oi1.product_id = p1.product_id
-            JOIN products p2 ON oi2.product_id = p2.product_id
-            WHERE oi1.product_id < oi2.product_id
-            GROUP BY p1.product_name, p2.product_name, p1.price, p2.price
-            HAVING COUNT(DISTINCT oi1.order_id) >= 2
-        )
-        SELECT 
-            product_a,
-            product_b,
-            times_bought_together,
-            ROUND(total_revenue, 2) as total_revenue,
-            ROUND(avg_actual_combined_price, 2) as avg_combined_price,
-            total_units_sold,
-            ROUND(min_combined_price, 2) as min_price,
-            ROUND(max_combined_price, 2) as max_price,
-            ROUND(total_revenue / times_bought_together, 2) as revenue_per_combination
-        FROM valuable_combinations
-        ORDER BY total_revenue DESC, times_bought_together DESC
-        LIMIT 15
-        """
-        
-        self.execute_query(
-            "high_value_combinations",
-            query7,
-            "Most valuable product combinations by total revenue"
-        )
-    
-    def run_all_analytics(self):
-        """Run all analytics queries"""
-        print("🚀 Starting Comprehensive Product Analytics\n")
-        print("=" * 60)
-        
-        # Run all analytics
-        self.run_product_cooccurrence_analysis()
-        self.run_market_basket_analysis()
-        self.run_category_cross_selling_analysis()
-        self.run_seasonal_product_patterns()
-        self.run_customer_segment_analysis()
-        self.run_brand_affinity_analysis()
-        self.run_high_value_combinations()
-        
-        # Display results
-        print("\n" + "=" * 60)
-        print("📊 ANALYTICS RESULTS")
-        print("=" * 60)
-        
-        for query_name in self.query_results.keys():
-            self.display_results(query_name, limit=8)
-        
-        # Performance summary
-        self.display_performance_summary()
+        for qname in queries_to_display:
+            if qname not in self.results:
+                print(f"❌ No results found for query: {qname}")
+                continue
+            
+            result_data = self.results[qname]
+            
+            # Check for errors
+            if 'error' in result_data and result_data['error']['occurred']:
+                print(f"\n❌ Query {qname} failed: {result_data['error']['message']}")
+                continue
+            
+            # Get sample data
+            sample_data = result_data['data_structure']['sample_data']
+            columns = result_data['data_structure']['column_names']
+            total_rows = result_data['performance_metrics']['rows_returned']
+            
+            print(f"\n📊 Results for {qname}:")
+            print(f"   Execution order: #{result_data['query_info']['execution_order']}")
+            print(f"   Total rows: {total_rows:,}")
+            
+            if not sample_data:
+                print("   No data found")
+                continue
+            
+            # Show sample results
+            display_limit = min(limit, len(sample_data))
+            print(f"   Showing first {display_limit} rows:")
+            
+            print(tabulate(sample_data[:display_limit], headers=columns, tablefmt="grid", floatfmt=".2f"))
+            
+            if total_rows > display_limit:
+                print(f"   ... and {total_rows - display_limit} more rows")
     
     def display_performance_summary(self):
-        """Display performance metrics for all queries"""
-        print("\n" + "=" * 60)
-        print("⚡ PERFORMANCE SUMMARY")
-        print("=" * 60)
+        """Display comprehensive performance summary"""
+        print("\n" + "=" * 70)
+        print("⚡ COMPREHENSIVE PERFORMANCE SUMMARY")
+        print("=" * 70)
         
         performance_data = []
-        total_time = 0
+        total_time_ms = 0
+        total_rows = 0
         
-        for query_name, metrics in self.performance_metrics.items():
-            execution_time = metrics['execution_time']
-            row_count = metrics['row_count']
-            total_time += execution_time
+        # Sort by execution order
+        sorted_results = sorted(
+            self.results.items(),
+            key=lambda x: x[1]['query_info']['execution_order']
+        )
+        
+        for query_name, data in sorted_results:
+            execution_order = data['query_info']['execution_order']
+            
+            if 'error' in data and data['error']['occurred']:
+                performance_data.append([
+                    f"#{execution_order}",
+                    query_name.replace('_', ' ').title(),
+                    "ERROR",
+                    "0",
+                    ', '.join(data['query_info']['affected_tables']),
+                    data['error']['message'][:30] + "..."
+                ])
+                continue
+            
+            metrics = data['performance_metrics']
+            response_time_ms = metrics['response_time_ms']
+            rows = metrics['rows_returned']
+            tables = ', '.join(data['query_info']['affected_tables'])
+            
+            total_time_ms += response_time_ms
+            total_rows += rows
             
             performance_data.append([
+                f"#{execution_order}",
                 query_name.replace('_', ' ').title(),
-                f"{execution_time:.4f}s",
-                f"{row_count:,}",
-                f"{row_count/execution_time:.0f}" if execution_time > 0 else "N/A"
+                f"{response_time_ms:.2f}ms",
+                f"{rows:,}",
+                tables,
+                "SUCCESS"
             ])
         
-        headers = ["Query", "Execution Time", "Rows", "Rows/Second"]
+        headers = ["Order", "Query Name", "Response Time", "Rows", "Tables", "Status"]
         print(tabulate(performance_data, headers=headers, tablefmt="grid"))
         
-        print(f"\n📈 Total execution time: {total_time:.4f}s")
-        print(f"📊 Average query time: {total_time/len(self.performance_metrics):.4f}s")
+        successful_queries = [k for k, v in self.results.items() 
+                            if not ('error' in v and v['error']['occurred'])]
         
-        # Find slowest and fastest queries
-        if self.performance_metrics:
-            slowest = max(self.performance_metrics.items(), key=lambda x: x[1]['execution_time'])
-            fastest = min(self.performance_metrics.items(), key=lambda x: x[1]['execution_time'])
+        if successful_queries:
+            print(f"\n📈 Total execution time: {total_time_ms:.2f}ms")
+            print(f"📊 Total rows queried: {total_rows:,}")
+            print(f"⏱️  Average query time: {total_time_ms/len(successful_queries):.2f}ms")
+            print(f"✅ Success rate: {len(successful_queries)}/{len(self.results)} ({len(successful_queries)/len(self.results)*100:.1f}%)")
             
-            print(f"🐌 Slowest query: {slowest[0]} ({slowest[1]['execution_time']:.4f}s)")
-            print(f"🚀 Fastest query: {fastest[0]} ({fastest[1]['execution_time']:.4f}s)")
+            # Find slowest and fastest queries
+            execution_times = [(k, v['performance_metrics']['response_time_ms']) 
+                             for k, v in self.results.items() 
+                             if k in successful_queries]
+            
+            if execution_times:
+                slowest = max(execution_times, key=lambda x: x[1])
+                fastest = min(execution_times, key=lambda x: x[1])
+                
+                print(f"🐌 Slowest query: {slowest[0]} ({slowest[1]:.2f}ms)")
+                print(f"🚀 Fastest query: {fastest[0]} ({fastest[1]:.2f}ms)")
     
-    def export_results_to_json(self, filename="analytics_results.json"):
-        """Export all results to JSON file"""
+    def export_results_to_json(self, filename=None):
+        """Export comprehensive results to JSON file with timestamp (backup option)"""
+        if filename is None:
+            # Generate timestamped filename
+            timestamp = datetime.now().strftime(QUERY_CONFIG['timestamp_format'])
+            filename = QUERY_CONFIG['export_filename_template'].format(timestamp=timestamp)
+        
+        # Create comprehensive export structure
         export_data = {
-            'timestamp': datetime.now().isoformat(),
-            'database_config': {k: v for k, v in self.db_config.items() if k != 'password'},
-            'performance_metrics': {
-                k: {
-                    'execution_time': v['execution_time'],
-                    'row_count': v['row_count'],
-                    'timestamp': v['timestamp'].isoformat()
-                } for k, v in self.performance_metrics.items()
+            'export_metadata': {
+                'timestamp': datetime.now().isoformat(),
+                'database_host': self.db_config.get('host', 'unknown'),
+                'database_name': self.db_config.get('database', 'unknown'),
+                'total_queries_executed': len(self.results),
+                'successful_queries': len([k for k, v in self.results.items() 
+                                         if not ('error' in v and v['error']['occurred'])]),
+                'execution_order': self.execution_order,
+                'script_version': "2.0_flexible_db",
+                'description': "Flexible business analytics queries with database storage",
+                'analytics_run_id': self.analytics_run_id
             },
-            'query_summaries': {
-                k: {
-                    'description': v['description'],
-                    'row_count': v['row_count'],
-                    'columns': v['columns']
-                } for k, v in self.query_results.items()
-            }
+            'configuration': QUERY_CONFIG,
+            'performance_summary': {
+                'total_execution_time_ms': sum([
+                    v['performance_metrics']['response_time_ms'] 
+                    for v in self.results.values() 
+                    if 'performance_metrics' in v and 'error' not in v
+                ]),
+                'total_rows_queried': sum([
+                    v['performance_metrics']['rows_returned'] 
+                    for v in self.results.values() 
+                    if 'performance_metrics' in v and 'error' not in v
+                ]),
+                'average_response_time_ms': None,
+                'success_rate_percent': None
+            },
+            'query_results': self.results
         }
         
+        # Calculate averages
+        successful_count = len([v for v in self.results.values() if 'error' not in v])
+        if successful_count > 0:
+            export_data['performance_summary']['average_response_time_ms'] = (
+                export_data['performance_summary']['total_execution_time_ms'] / successful_count
+            )
+            export_data['performance_summary']['success_rate_percent'] = (
+                successful_count / len(self.results) * 100
+            )
+        
         try:
-            with open(filename, 'w') as f:
-                json.dump(export_data, f, indent=2, default=str)
-            print(f"📄 Results exported to {filename}")
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, indent=2, default=self.json_serializer, ensure_ascii=False)
+            print(f"\n📄 Backup results exported to {filename}")
+            print(f"   📅 Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   🔗 Analytics Run ID: #{self.analytics_run_id}")
+            return filename
         except Exception as e:
-            print(f"❌ Failed to export results: {e}")
+            print(f"❌ Failed to export backup results: {e}")
+            return None
+    
+    def get_stored_results_summary(self):
+        """Retrieve summary of stored results from database"""
+        if not self.analytics_run_id:
+            return None
+        
+        try:
+            cursor = self.connection.cursor()
+            
+            # Get analytics run summary
+            cursor.execute("""
+                SELECT run_id, export_timestamp, total_queries_executed, 
+                       successful_queries, total_execution_time_ms, 
+                       total_rows_queried, success_rate_percent
+                FROM Analytics_Runs 
+                WHERE run_id = %s
+            """, (self.analytics_run_id,))
+            
+            run_summary = cursor.fetchone()
+            
+            if run_summary:
+                print(f"\n💾 DATABASE STORAGE SUMMARY")
+                print("=" * 40)
+                print(f"Analytics Run ID: #{run_summary[0]}")
+                print(f"Execution Time: {run_summary[1]}")
+                print(f"Total Queries: {run_summary[2]}")
+                print(f"Successful: {run_summary[3]}")
+                print(f"Execution Time: {run_summary[4]:.2f}ms")
+                print(f"Rows Queried: {run_summary[5]:,}")
+                print(f"Success Rate: {run_summary[6]:.1f}%")
+                
+                # Get query results count
+                cursor.execute("""
+                    SELECT COUNT(*) FROM Analytics_Query_Results 
+                    WHERE run_id = %s
+                """, (self.analytics_run_id,))
+                
+                query_count = cursor.fetchone()[0]
+                print(f"Query Records Stored: {query_count}")
+                print("=" * 40)
+            
+            cursor.close()
+            return run_summary
+            
+        except psycopg2.Error as e:
+            print(f"❌ Failed to retrieve stored results summary: {e}")
+            return None
 
 
 def load_environment():
-    """Load environment variables"""
+    """Load environment variables with fallback defaults"""
     return {
         'host': config('DB_HOST', 'localhost'),
         'database': config('DB_NAME', 'test_data'),
@@ -552,34 +733,89 @@ def load_environment():
 
 
 def main():
-    """Main function"""
-    print("📊 Product Analytics & Performance Testing")
-    print("=" * 50)
+    """Main execution function with flexible options and database storage"""
+    print("📊 Flexible Product Analytics & Performance Testing with Database Storage")
+    print("=" * 80)
+    print("🔄 Loop-based execution with separated query definitions")
+    print("💾 Results stored in Analytics_Runs and Analytics_Query_Results tables")
     
     # Load database configuration
     db_config = load_environment()
     
     # Initialize analytics
-    analytics = ProductAnalytics(db_config)
+    analytics = FlexibleProductAnalytics(db_config)
     
     if not analytics.connect():
+        print("❌ Failed to connect to database. Please check your configuration.")
         return
     
     try:
-        # Run all analytics
-        analytics.run_all_analytics()
+        # Example execution options:
         
-        # Export results
-        analytics.export_results_to_json()
+        # Option 1: Execute ALL queries
+        success = analytics.execute_queries_in_loop()
         
-        print("\n🎉 Analytics completed successfully!")
+        # Option 2: Execute specific queries
+        # success = analytics.execute_queries_in_loop(
+        #     query_names=["favorite_products", "favorite_categories"],
+        #     skip_on_error=True
+        # )
+        
+        # Option 3: Execute queries with error handling
+        # success = analytics.execute_queries_in_loop(skip_on_error=True)
+        
+        if success:
+            # Display results
+            print("\n" + "=" * 70)
+            print("📊 QUERY RESULTS PREVIEW")
+            print("=" * 70)
+            analytics.display_results()
+            
+            # Performance summary
+            analytics.display_performance_summary()
+            
+            # Show database storage summary
+            analytics.get_stored_results_summary()
+            
+            # Optional: Export backup file
+            print(f"\n💾 Results have been stored in database (Analytics Run #{analytics.analytics_run_id})")
+            backup_response = input("Create backup JSON file? (y/N): ").strip().lower()
+            if backup_response in ['y', 'yes']:
+                exported_file = analytics.export_results_to_json()
+                if exported_file:
+                    print(f"📄 Backup file created: {exported_file}")
+            
+            print("\n🎉 Flexible analytics completed successfully!")
+            print("📋 Features used:")
+            print("   • Separated query definitions in queries.py")
+            print("   • Loop-based execution with error handling")
+            print("   • Database storage in Analytics_Runs and Analytics_Query_Results tables")
+            print("   • Configurable execution options")
+            print(f"   • Results stored as Analytics Run #{analytics.analytics_run_id}")
+            print("   • Optional JSON backup export")
+            
+            print(f"\n🔍 To view stored results later, query:")
+            print(f"   SELECT * FROM Analytics_Runs WHERE run_id = {analytics.analytics_run_id};")
+            print(f"   SELECT * FROM Analytics_Query_Results WHERE run_id = {analytics.analytics_run_id};")
+            
+        else:
+            print("\n❌ Analytics execution failed or was incomplete")
+            if analytics.analytics_run_id:
+                print(f"⚠️  Partial results may be stored in Analytics Run #{analytics.analytics_run_id}")
         
     except KeyboardInterrupt:
         print("\n⏹️  Analytics interrupted by user")
+        if analytics.analytics_run_id:
+            print(f"⚠️  Partial results stored in Analytics Run #{analytics.analytics_run_id}")
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        if analytics.analytics_run_id:
+            print(f"⚠️  Partial results may be stored in Analytics Run #{analytics.analytics_run_id}")
     finally:
         analytics.disconnect()
+        print("\n🔌 Database connection closed")
 
 
 if __name__ == "__main__":
