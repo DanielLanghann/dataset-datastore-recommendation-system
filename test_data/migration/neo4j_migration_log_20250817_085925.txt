@@ -1,0 +1,30 @@
+Neo4j Migration Log
+==================================================
+Migration completed at: 2025-08-17T08:59:25.704719
+
+[2025-08-17 08:59:00] INFO: Connected to PostgreSQL: localhost:5433
+[2025-08-17 08:59:00] INFO: PostgreSQL version: PostgreSQL 17.5 (Debian 17.5-1.pgdg120+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14) 12.2.0, 64-bit
+[2025-08-17 08:59:00] INFO: Connected to Neo4j: bolt://localhost:7687
+[2025-08-17 08:59:00] INFO: Neo4j version: 5.15.0 (community edition)
+[2025-08-17 08:59:00] INFO: Found 17464 nodes and 18656 relationships to delete
+[2025-08-17 08:59:01] INFO: Deleted all relationships
+[2025-08-17 08:59:01] INFO: Deleted all nodes
+[2025-08-17 08:59:01] INFO: Neo4j database cleared successfully
+[2025-08-17 08:59:01] INFO: Created Product ID constraint
+[2025-08-17 08:59:01] INFO: Created Category ID constraint
+[2025-08-17 08:59:01] INFO: Created Product name index
+[2025-08-17 08:59:01] INFO: Created Product brand index
+[2025-08-17 08:59:01] INFO: Created Category name index
+[2025-08-17 08:59:01] INFO: Created Association frequency index
+[2025-08-17 08:59:01] INFO: Testing with category: ID=1, Name='Electronics'
+[2025-08-17 08:59:01] INFO: Test category import successful: Electronics
+[2025-08-17 08:59:01] INFO: Testing with product: ID=1, Name='Line Goal', Category=Last Western
+[2025-08-17 08:59:01] INFO: Test product import successful: Line Goal
+[2025-08-17 08:59:01] INFO: Found 10000 categories to migrate
+[2025-08-17 08:59:06] INFO: Successfully migrated all 10000 categories
+[2025-08-17 08:59:06] INFO: Found 10000 products to migrate
+[2025-08-17 08:59:12] INFO: Successfully migrated all 10000 products
+[2025-08-17 08:59:12] INFO: Found 20129 product associations to migrate
+[2025-08-17 08:59:25] INFO: Successfully migrated all 20129 product associations
+[2025-08-17 08:59:25] INFO: Complete migration verification successful
+[2025-08-17 08:59:25] INFO: Performance test completed: 57.86ms, 60.45ms
