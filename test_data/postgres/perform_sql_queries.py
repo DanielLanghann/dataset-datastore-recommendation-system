@@ -3,6 +3,7 @@
 enhanced_perform_queries.py
 Enhanced query performance script with database storage
 All results are stored in Analytics_Query_Results table
+PostgreSQL only version
 """
 
 import psycopg2
@@ -15,10 +16,7 @@ from decouple import config
 from tabulate import tabulate
 
 # Import our enhanced queries module
-from test_data.postgres.queries import (
-    get_all_queries, get_query_list, get_query, 
-    QUERY_CONFIG
-)
+from sql_queries import *
 
 
 class EnhancedAnalytics:
@@ -34,7 +32,7 @@ class EnhancedAnalytics:
         self.failed_queries = 0
     
     def json_serializer(self, obj):
-        """Custom JSON serializer for PostgreSQL and Neo4j data types"""
+        """Custom JSON serializer for PostgreSQL data types"""
         if isinstance(obj, Decimal):
             return float(obj)
         elif isinstance(obj, (datetime, date)):
@@ -47,22 +45,18 @@ class EnhancedAnalytics:
         """Safely serialize objects to JSON with custom serializer"""
         return json.dumps(obj, default=self.json_serializer)
     
-    def connect_databases(self):
+    def connect_database(self):
         """Connect to PostgreSQL"""
-        success = True
-        
-        # Connect to PostgreSQL
         try:
             self.pg_connection = psycopg2.connect(**self.postgres_config)
             print(f"✅ Connected to PostgreSQL: {self.postgres_config['host']}:{self.postgres_config['port']}")
+            return True
         except psycopg2.Error as e:
             print(f"❌ PostgreSQL connection failed: {e}")
-            success = False
-        
-        return success
+            return False
     
-    def disconnect_databases(self):
-        """Close database connections"""
+    def disconnect_database(self):
+        """Close database connection"""
         if self.pg_connection:
             self.pg_connection.close()
     
@@ -82,7 +76,7 @@ class EnhancedAnalytics:
                 self.postgres_config['host'],
                 self.postgres_config['database'],
                 '3.0_database_storage',
-                'Enhanced analytics with database storage',
+                'Enhanced PostgreSQL analytics with database storage',
                 QUERY_CONFIG.get('display_limit', 5),
                 QUERY_CONFIG.get('sample_data_limit', 3)
             ))
@@ -179,20 +173,16 @@ class EnhancedAnalytics:
             performance_metrics = result_data['performance_metrics']
             data_structure = result_data['data_structure']
             results_summary = result_data['results_summary']
-            
-            # Handle error cases
-            error_occurred = 'error' in result_data
-            error_message = result_data.get('error', {}).get('message', None) if error_occurred else None
-            
+
             cursor.execute("""
                 INSERT INTO Analytics_Query_Results (
                     run_id, query_name, query_description, dataset_reference,
-                    sql_query, affected_tables, execution_timestamp, execution_order,
+                    query, affected_tables, execution_timestamp, execution_order,
                     response_time_ms, response_time_seconds, rows_returned, columns_returned,
                     column_names, sample_data, data_types,
-                    has_data, first_row, total_data_points
+                    has_data, first_row, total_data_points, system
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
             """, (
                 self.analytics_run_id,
@@ -212,9 +202,10 @@ class EnhancedAnalytics:
                 self.safe_json_dumps(data_structure['data_types']),
                 results_summary['has_data'],
                 self.safe_json_dumps(results_summary['first_row']),
-                results_summary['total_data_points']
+                results_summary['total_data_points'],
+                'postgres'
             ))
-            
+                        
             self.pg_connection.commit()
             cursor.close()
             
@@ -258,27 +249,22 @@ class EnhancedAnalytics:
             
             return self._format_query_result(
                 query_name, query_data, results, column_names, 
-                execution_time_ms, affected_tables, 'postgresql'
+                execution_time_ms, affected_tables
             )
             
         except psycopg2.Error as e:
             print(f"   ❌ PostgreSQL query failed: {e}")
-            return self._format_error_result(query_name, query_data, str(e), 'postgresql')
+            return self._format_error_result(query_name, query_data, str(e))
     
-    def execute_neo4j_query(self, query_name, query_data):
-        """Neo4j queries not supported - return error"""
-        print(f"⚠️  Neo4j: {query_name} - Not supported in this version")
-        return self._format_error_result(query_name, query_data, "Neo4j not supported", 'neo4j')
-    
-    def _format_query_result(self, query_name, query_data, results, column_names, execution_time_ms, affected_tables, database_type):
+    def _format_query_result(self, query_name, query_data, results, column_names, execution_time_ms, affected_tables):
         """Format query result in standard format"""
         result_data = {
             'query_info': {
                 'name': query_name,
                 'description': query_data['description'],
                 'dataset_reference': query_data['dataset_reference'],
-                'database': database_type,
-                'sql': query_data.get('sql', query_data.get('cypher', '')),
+                'database': 'postgresql',
+                'sql': query_data['sql'],
                 'affected_tables': affected_tables,
                 'execution_timestamp': datetime.now().isoformat(),
                 'execution_order': len(self.execution_order) + 1
@@ -331,19 +317,19 @@ class EnhancedAnalytics:
         
         print(f"   ⏱️  Response time: {execution_time_ms:.2f}ms")
         print(f"   📊 Rows returned: {len(results):,}")
-        print(f"   🗂️  Tables/Collections: {', '.join(affected_tables)}")
+        print(f"   🗂️  Tables: {', '.join(affected_tables)}")
         
         return result_data
     
-    def _format_error_result(self, query_name, query_data, error_message, database_type):
+    def _format_error_result(self, query_name, query_data, error_message):
         """Format error result in standard format"""
         return {
             'query_info': {
                 'name': query_name,
                 'description': query_data['description'],
                 'dataset_reference': query_data['dataset_reference'],
-                'database': database_type,
-                'sql': query_data.get('sql', query_data.get('cypher', '')),
+                'database': 'postgresql',
+                'sql': query_data['sql'],
                 'affected_tables': [],
                 'execution_timestamp': datetime.now().isoformat(),
                 'execution_order': len(self.execution_order) + 1
@@ -372,18 +358,10 @@ class EnhancedAnalytics:
         }
     
     def execute_query(self, query_name, query_data):
-        """Execute a query based on its database type and store result"""
-        database_type = query_data.get('database', 'postgresql')
-        
+        """Execute a PostgreSQL query and store result"""
         self.total_queries_executed += 1
         
-        if database_type == 'postgresql':
-            result = self.execute_postgresql_query(query_name, query_data)
-        elif database_type == 'neo4j':
-            result = self.execute_neo4j_query(query_name, query_data)
-        else:
-            print(f"❌ Unknown database type: {database_type}")
-            return False
+        result = self.execute_postgresql_query(query_name, query_data)
         
         if result:
             # Store result in memory for comparisons
@@ -406,9 +384,9 @@ class EnhancedAnalytics:
         self.failed_queries += 1
         return False
     
-    def execute_queries_in_loop(self, query_names=None, database_filter=None, skip_on_error=False):
-        """Execute queries with enhanced database support and storage"""
-        print("🚀 Enhanced Query Execution with Database Storage\n")
+    def execute_queries_in_loop(self, query_names=None, skip_on_error=False):
+        """Execute PostgreSQL queries with database storage"""
+        print("🚀 Enhanced PostgreSQL Query Execution with Database Storage\n")
         print("=" * 80)
         
         # Create analytics run
@@ -430,12 +408,6 @@ class EnhancedAnalytics:
             
             queries_to_run = {name: get_query(name) for name in query_names}
         
-        # Filter by database type if specified
-        if database_filter:
-            queries_to_run = {name: query for name, query in queries_to_run.items() 
-                            if query.get('database') == database_filter}
-            print(f"🔍 Filtered to {database_filter} queries only")
-        
         print(f"📋 Executing {len(queries_to_run)} queries")
         print(f"📊 Analytics Run ID: {self.analytics_run_id}")
         print(f"⚙️  Skip on error: {'Yes' if skip_on_error else 'No'}")
@@ -445,7 +417,6 @@ class EnhancedAnalytics:
         # Execute individual queries
         for i, (query_name, query_data) in enumerate(queries_to_run.items(), 1):
             print(f"\n[{i}/{len(queries_to_run)}] Processing: {query_name}")
-            print(f"   Database: {query_data.get('database', 'postgresql').upper()}")
             
             success = self.execute_query(query_name, query_data)
             
@@ -466,11 +437,7 @@ class EnhancedAnalytics:
         print(f"✅ Successful queries: {self.successful_queries}")
         print(f"❌ Failed queries: {self.failed_queries}")
         print(f"📋 Total attempted: {self.total_queries_executed}")
-        
-        # Database breakdown
-        pg_queries = len([q for q in self.results.values() if q['query_info']['database'] == 'postgresql'])
-        
-        print(f"🗄️  PostgreSQL queries: {pg_queries}")
+        print(f"🗄️  PostgreSQL queries: {len(self.results)}")
         
         print(f"\n💾 All results stored in Analytics_Query_Results table")
         print(f"💡 Use view_analytics_results.py to view stored results")
@@ -503,7 +470,7 @@ class EnhancedAnalytics:
                     query_name,
                     f"{response_time:.2f}ms",
                     f"{rows_returned:,}",
-                    result['query_info']['database'].upper()
+                    "PostgreSQL"
                 ])
         
         headers = ["Query Name", "Response Time", "Rows", "Database"]
@@ -520,7 +487,7 @@ class EnhancedAnalytics:
 
 
 def load_environment():
-    """Load database configurations"""
+    """Load database configuration"""
     postgres_config = {
         'host': config('DB_HOST', 'localhost'),
         'database': config('DB_NAME', 'test_data'),
@@ -540,14 +507,14 @@ def main():
     print("🔄 PostgreSQL query execution with database storage")
     print("💾 All results stored in Analytics_Query_Results table")
     
-    # Load database configurations
+    # Load database configuration
     postgres_config = load_environment()
     
     # Initialize enhanced analytics
     analytics = EnhancedAnalytics(postgres_config)
     
-    if not analytics.connect_databases():
-        print("❌ Failed to connect to required databases")
+    if not analytics.connect_database():
+        print("❌ Failed to connect to PostgreSQL database")
         return
     
     try:
@@ -555,7 +522,6 @@ def main():
         success = analytics.execute_queries_in_loop()
         
         # Alternative execution options:
-        # success = analytics.execute_queries_in_loop(database_filter='postgresql')
         # success = analytics.execute_queries_in_loop(
         #     query_names=["favorite_products", "favorite_categories"]
         # )
@@ -587,8 +553,8 @@ def main():
         import traceback
         traceback.print_exc()
     finally:
-        analytics.disconnect_databases()
-        print("\n🔌 Database connections closed")
+        analytics.disconnect_database()
+        print("\n🔌 Database connection closed")
 
 
 if __name__ == "__main__":

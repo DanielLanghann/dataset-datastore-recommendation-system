@@ -97,6 +97,35 @@ def get_schema_sql():
         UNIQUE(product_a_id, product_b_id)
     );
 
+     -- Analytics_Runs table for storing analytics execution metadata
+    CREATE TABLE Analytics_Runs (
+        run_id SERIAL PRIMARY KEY,
+        export_timestamp TIMESTAMP NOT NULL,
+        database_host VARCHAR(255),
+        database_name VARCHAR(255),
+        total_queries_executed INTEGER,
+        successful_queries INTEGER,
+        execution_order TEXT, -- JSON array of query names
+        script_version VARCHAR(50),
+        description TEXT,
+        
+        -- Configuration
+        display_limit INTEGER,
+        sample_data_limit INTEGER,
+        export_filename_template VARCHAR(255),
+        timestamp_format VARCHAR(50),
+        
+        -- Performance Summary
+        total_execution_time_ms DECIMAL(10,2),
+        total_rows_queried INTEGER,
+        average_response_time_ms DECIMAL(10,2),
+        success_rate_percent DECIMAL(5,2),
+        
+        -- Additional metadata
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        analytics_json TEXT -- Store the complete JSON for backup/reference
+    );
+
     -- Analytics_Query_Results table for individual query results
     CREATE TABLE Analytics_Query_Results (
         result_id SERIAL PRIMARY KEY,
@@ -106,7 +135,7 @@ def get_schema_sql():
         query_name VARCHAR(255) NOT NULL,
         query_description TEXT,
         dataset_reference VARCHAR(100),
-        sql_query TEXT,
+        query TEXT,
         affected_tables TEXT, -- JSON array of table names
         execution_timestamp TIMESTAMP,
         execution_order INTEGER,
@@ -128,6 +157,7 @@ def get_schema_sql():
         total_data_points INTEGER,
         
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        system VARCHAR(255),
         
         FOREIGN KEY (run_id) REFERENCES Analytics_Runs(run_id) ON DELETE CASCADE
     );
@@ -352,10 +382,10 @@ def parse_arguments():
         description='Setup database schema with optional test data creation',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
-Examples:
-  python setup_testschema.py                    # Create schema only
-  python setup_testschema.py --create-testdata  # Create schema with sample data
-  python setup_testschema.py -h                 # Show this help
+            Examples:
+            python setup_testschema.py                    # Create schema only
+            python setup_testschema.py --create-testdata  # Create schema with sample data
+            python setup_testschema.py -h                 # Show this help
         '''
     )
     
