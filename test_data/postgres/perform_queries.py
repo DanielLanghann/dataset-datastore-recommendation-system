@@ -15,7 +15,7 @@ from decouple import config
 from tabulate import tabulate
 
 # Import our enhanced queries module
-from queries import (
+from test_data.postgres.queries import (
     get_all_queries, get_query_list, get_query, 
     QUERY_CONFIG
 )
