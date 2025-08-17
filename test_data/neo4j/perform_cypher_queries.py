@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-enhanced_perform_queries.py
-Enhanced query performance script with database storage
+perform_cypher_queries.py
+Neo4j Cypher query performance script with PostgreSQL storage
 All results are stored in Analytics_Query_Results table
 """
 
@@ -13,18 +13,21 @@ from datetime import datetime, date
 from decimal import Decimal
 from decouple import config
 from tabulate import tabulate
+from neo4j import GraphDatabase, basic_auth
 
-# Import our enhanced queries module
-from queries import (
+# Import our Cypher queries module
+from cypher_queries import (
     get_all_queries, get_query_list, get_query, 
     QUERY_CONFIG
 )
 
 
-class EnhancedAnalytics:
-    def __init__(self, postgres_config):
+class CypherAnalytics:
+    def __init__(self, postgres_config, neo4j_config):
         self.postgres_config = postgres_config
+        self.neo4j_config = neo4j_config
         self.pg_connection = None
+        self.neo4j_driver = None
         self.results = {}
         self.execution_order = []
         self.analytics_run_id = None
@@ -34,7 +37,7 @@ class EnhancedAnalytics:
         self.failed_queries = 0
     
     def json_serializer(self, obj):
-        """Custom JSON serializer for PostgreSQL and Neo4j data types"""
+        """Custom JSON serializer for various data types"""
         if isinstance(obj, Decimal):
             return float(obj)
         elif isinstance(obj, (datetime, date)):
@@ -48,26 +51,66 @@ class EnhancedAnalytics:
         return json.dumps(obj, default=self.json_serializer)
     
     def connect_databases(self):
-        """Connect to PostgreSQL"""
-        success = True
-        
+        """Connect to both PostgreSQL and Neo4j"""
         # Connect to PostgreSQL
         try:
             self.pg_connection = psycopg2.connect(**self.postgres_config)
             print(f"✅ Connected to PostgreSQL: {self.postgres_config['host']}:{self.postgres_config['port']}")
         except psycopg2.Error as e:
             print(f"❌ PostgreSQL connection failed: {e}")
-            success = False
+            return False
         
-        return success
+        # Connect to Neo4j
+        try:
+            self.neo4j_driver = GraphDatabase.driver(
+                self.neo4j_config['uri'],
+                auth=basic_auth(self.neo4j_config['user'], self.neo4j_config['password'])
+            )
+            # Test the connection
+            with self.neo4j_driver.session() as session:
+                result = session.run("RETURN 1 as test")
+                result.single()
+            print(f"✅ Connected to Neo4j: {self.neo4j_config['uri']}")
+            return True
+        except Exception as e:
+            print(f"❌ Neo4j connection failed: {e}")
+            return False
+    
+    def connect_databases(self):
+        """Connect to both PostgreSQL and Neo4j"""
+        # Connect to PostgreSQL
+        try:
+            self.pg_connection = psycopg2.connect(**self.postgres_config)
+            print(f"✅ Connected to PostgreSQL: {self.postgres_config['host']}:{self.postgres_config['port']}")
+        except psycopg2.Error as e:
+            print(f"❌ PostgreSQL connection failed: {e}")
+            return False
+        
+        # Connect to Neo4j
+        try:
+            self.neo4j_driver = GraphDatabase.driver(
+                self.neo4j_config['uri'],
+                auth=basic_auth(self.neo4j_config['user'], self.neo4j_config['password'])
+            )
+            # Test the connection
+            with self.neo4j_driver.session() as session:
+                result = session.run("RETURN 1 as test")
+                result.single()
+            print(f"✅ Connected to Neo4j: {self.neo4j_config['uri']}")
+            return True
+        except Exception as e:
+            print(f"❌ Neo4j connection failed: {e}")
+            return False
     
     def disconnect_databases(self):
         """Close database connections"""
         if self.pg_connection:
             self.pg_connection.close()
+        if self.neo4j_driver:
+            self.neo4j_driver.close()
     
     def create_analytics_run(self):
-        """Create a new analytics run record and return its ID"""
+        """Create a new analytics run record in PostgreSQL and return its ID"""
         try:
             cursor = self.pg_connection.cursor()
             
@@ -79,10 +122,10 @@ class EnhancedAnalytics:
                 RETURNING run_id
             """, (
                 self.execution_start_time,
-                self.postgres_config['host'],
-                self.postgres_config['database'],
-                '3.0_database_storage',
-                'Enhanced analytics with database storage',
+                self.neo4j_config['uri'],
+                'neo4j_graph_db',
+                '1.0_cypher_analytics',
+                'Neo4j Cypher analytics with PostgreSQL storage',
                 QUERY_CONFIG.get('display_limit', 5),
                 QUERY_CONFIG.get('sample_data_limit', 3)
             ))
@@ -180,27 +223,23 @@ class EnhancedAnalytics:
             data_structure = result_data['data_structure']
             results_summary = result_data['results_summary']
             
-            # Handle error cases
-            error_occurred = 'error' in result_data
-            error_message = result_data.get('error', {}).get('message', None) if error_occurred else None
-            
             cursor.execute("""
                 INSERT INTO Analytics_Query_Results (
                     run_id, query_name, query_description, dataset_reference,
-                    sql_query, affected_tables, execution_timestamp, execution_order,
+                    query, affected_tables, execution_timestamp, execution_order,
                     response_time_ms, response_time_seconds, rows_returned, columns_returned,
                     column_names, sample_data, data_types,
-                    has_data, first_row, total_data_points
+                    has_data, first_row, total_data_points, system
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
             """, (
                 self.analytics_run_id,
                 query_name,
                 query_info['description'],
                 query_info['dataset_reference'],
-                query_info['sql'],
-                self.safe_json_dumps(query_info['affected_tables']),
+                query_info['cypher'],  # Store Cypher query in query field
+                self.safe_json_dumps(query_info['affected_nodes']),  # Store node types instead of tables
                 datetime.fromisoformat(query_info['execution_timestamp'].replace('Z', '+00:00')),
                 query_info['execution_order'],
                 performance_metrics['response_time_ms'],
@@ -212,13 +251,14 @@ class EnhancedAnalytics:
                 self.safe_json_dumps(data_structure['data_types']),
                 results_summary['has_data'],
                 self.safe_json_dumps(results_summary['first_row']),
-                results_summary['total_data_points']
+                results_summary['total_data_points'],
+                'neo4j'  # Add system identifier
             ))
             
             self.pg_connection.commit()
             cursor.close()
             
-            print(f"   💾 Stored query result in database")
+            print(f"   💾 Stored query result in PostgreSQL database")
             return True
             
         except psycopg2.Error as e:
@@ -226,60 +266,141 @@ class EnhancedAnalytics:
             self.pg_connection.rollback()
             return False
     
-    def extract_tables_from_query(self, query_sql):
-        """Extract table names from SQL query using regex"""
-        clean_query = re.sub(r'--.*?\n', '\n', query_sql)
+    def extract_nodes_from_cypher(self, cypher_query):
+        """Extract node types from Cypher query using regex"""
+        # Clean the query
+        clean_query = re.sub(r'//.*?\n', '\n', cypher_query)
         clean_query = re.sub(r'/\*.*?\*/', '', clean_query, flags=re.DOTALL)
-        clean_query = re.sub(r'\s+', ' ', clean_query).upper()
+        clean_query = re.sub(r'\s+', ' ', clean_query)
         
-        table_pattern = r'(?:FROM|JOIN)\s+([A-Z_][A-Z0-9_]*)'
-        matches = re.findall(table_pattern, clean_query)
+        # Extract node patterns like (p:Product), (c:Category)
+        node_pattern = r'\([a-zA-Z0-9_]*:([A-Z][a-zA-Z0-9_]*)\)'
+        matches = re.findall(node_pattern, clean_query)
         
         return sorted(list(set(matches)))
     
-    def execute_postgresql_query(self, query_name, query_data):
-        """Execute a PostgreSQL query"""
-        print(f"🔍 PostgreSQL: {query_name}")
+    def execute_cypher_query(self, query_name, query_data):
+        """Execute a Cypher query against Neo4j"""
+        print(f"🔍 Neo4j Cypher: {query_name}")
+        print(f"   📝 Query: {query_data['cypher']}")
         
         try:
-            cursor = self.pg_connection.cursor()
+            affected_nodes = self.extract_nodes_from_cypher(query_data['cypher'])
             
-            affected_tables = self.extract_tables_from_query(query_data['sql'])
-            
+            # First, let's check what data exists in Neo4j
+            with self.neo4j_driver.session() as session:
+                # Check if we have any Product nodes
+                product_count = session.run("MATCH (p:Product) RETURN count(p) as count").single()["count"]
+                print(f"   🔍 Debug: Found {product_count} Product nodes in Neo4j")
+                
+                # Check if we have any Category nodes
+                category_count = session.run("MATCH (c:Category) RETURN count(c) as count").single()["count"]
+                print(f"   🔍 Debug: Found {category_count} Category nodes in Neo4j")
+                
+                # Check if we have any BOUGHT_TOGETHER relationships
+                bought_together_count = session.run("MATCH ()-[r:BOUGHT_TOGETHER]->() RETURN count(r) as count").single()["count"]
+                print(f"   🔍 Debug: Found {bought_together_count} BOUGHT_TOGETHER relationships in Neo4j")
+                
+                # Check if we have any BELONGS_TO relationships
+                belongs_count = session.run("MATCH ()-[r:BELONGS_TO]->() RETURN count(r) as count").single()["count"]
+                print(f"   🔍 Debug: Found {belongs_count} BELONGS_TO relationships in Neo4j")
+                
+                # Show sample Product nodes with their properties
+                sample_products = session.run("MATCH (p:Product) RETURN p LIMIT 3").data()
+                print(f"   🔍 Debug: Sample Product nodes: {sample_products}")
+                
             start_time = time.time()
-            cursor.execute(query_data['sql'])
-            results = cursor.fetchall()
+            
+            with self.neo4j_driver.session() as session:
+                result = session.run(query_data['cypher'])
+                records = list(result)
+            
             end_time = time.time()
             
             execution_time_ms = (end_time - start_time) * 1000
-            column_names = [desc[0] for desc in cursor.description] if cursor.description else []
             
-            cursor.close()
+            print(f"   🔍 Debug: Raw Neo4j result contains {len(records)} records")
+            
+            # Convert Neo4j records to regular Python data
+            results = []
+            column_names = []
+            
+            if records:
+                # Get column names from first record
+                column_names = list(records[0].keys())
+                print(f"   🔍 Debug: Column names from Neo4j: {column_names}")
+                
+                # Show first record in detail
+                if records:
+                    print(f"   🔍 Debug: First raw record: {dict(records[0])}")
+                
+                # Convert records to list of tuples
+                for i, record in enumerate(records):
+                    row = []
+                    for key in column_names:
+                        value = record[key]
+                        # Convert Neo4j types to Python types
+                        if value is None:
+                            row.append(None)
+                        elif hasattr(value, 'value'):  # Neo4j Integer, Float, etc.
+                            row.append(value.value)
+                        elif isinstance(value, (int, float, bool, str)):
+                            row.append(value)
+                        else:
+                            # Convert other types to string
+                            row.append(str(value))
+                    results.append(tuple(row))
+                    
+                    # Show first few converted rows for debugging
+                    if i < 3:
+                        print(f"   🔍 Debug: Converted row {i}: {row}")
+            else:
+                print("   ⚠️  No records returned from Neo4j query")
+                
+                # Let's try a simpler query to see if any data exists
+                with self.neo4j_driver.session() as session:
+                    simple_result = session.run("MATCH (p:Product) RETURN p.product_name LIMIT 5").data()
+                    print(f"   🔍 Debug: Simple Product query result: {simple_result}")
+            
+            print(f"   🔍 Debug: Final results list has {len(results)} items")
+            print(f"   🔍 Debug: Column names: {column_names}")
+            if results:
+                print(f"   🔍 Debug: First converted row: {results[0]}")
             
             return self._format_query_result(
                 query_name, query_data, results, column_names, 
-                execution_time_ms, affected_tables, 'postgresql'
+                execution_time_ms, affected_nodes
             )
             
-        except psycopg2.Error as e:
-            print(f"   ❌ PostgreSQL query failed: {e}")
-            return self._format_error_result(query_name, query_data, str(e), 'postgresql')
+        except Exception as e:
+            print(f"   ❌ Neo4j Cypher query failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return self._format_error_result(query_name, query_data, str(e))
     
-    def execute_neo4j_query(self, query_name, query_data):
-        """Neo4j queries not supported - return error"""
-        print(f"⚠️  Neo4j: {query_name} - Not supported in this version")
-        return self._format_error_result(query_name, query_data, "Neo4j not supported", 'neo4j')
-    
-    def _format_query_result(self, query_name, query_data, results, column_names, execution_time_ms, affected_tables, database_type):
+    def _format_query_result(self, query_name, query_data, results, column_names, execution_time_ms, affected_nodes):
         """Format query result in standard format"""
+        print(f"   🔍 Debug: _format_query_result called with:")
+        print(f"        - results length: {len(results)}")
+        print(f"        - column_names: {column_names}")
+        print(f"        - execution_time_ms: {execution_time_ms}")
+        print(f"        - affected_nodes: {affected_nodes}")
+        
+        # Determine data types from the first row if available
+        data_types = []
+        if results and len(results) > 0:
+            first_row = results[0]
+            data_types = [type(col).__name__ if col is not None else 'NoneType' for col in first_row]
+            print(f"   🔍 Debug: Data types from first row: {data_types}")
+        
         result_data = {
             'query_info': {
                 'name': query_name,
                 'description': query_data['description'],
                 'dataset_reference': query_data['dataset_reference'],
-                'database': database_type,
-                'sql': query_data.get('sql', query_data.get('cypher', '')),
-                'affected_tables': affected_tables,
+                'database': 'neo4j',
+                'cypher': query_data['cypher'],
+                'affected_nodes': affected_nodes,  # Node types instead of tables
                 'execution_timestamp': datetime.now().isoformat(),
                 'execution_order': len(self.execution_order) + 1
             },
@@ -292,8 +413,7 @@ class EnhancedAnalytics:
             'data_structure': {
                 'column_names': column_names,
                 'sample_data': results[:QUERY_CONFIG.get('sample_data_limit', 3)] if results else [],
-                'data_types': [str(type(col).__name__) if results and col is not None else 'NoneType' 
-                             for col in (results[0] if results else [])]
+                'data_types': data_types
             },
             'results_summary': {
                 'has_data': len(results) > 0,
@@ -302,49 +422,28 @@ class EnhancedAnalytics:
             }
         }
         
-        # Convert results to JSON-serializable format
-        if results:
-            serializable_results = []
-            for row in results[:QUERY_CONFIG.get('sample_data_limit', 3)]:
-                serializable_row = []
-                for item in row:
-                    if isinstance(item, Decimal):
-                        serializable_row.append(float(item))
-                    elif isinstance(item, (datetime, date)):
-                        serializable_row.append(item.isoformat())
-                    else:
-                        serializable_row.append(item)
-                serializable_results.append(tuple(serializable_row))
-            
-            result_data['data_structure']['sample_data'] = serializable_results
-            
-            if result_data['results_summary']['first_row']:
-                first_row_serializable = []
-                for item in result_data['results_summary']['first_row']:
-                    if isinstance(item, Decimal):
-                        first_row_serializable.append(float(item))
-                    elif isinstance(item, (datetime, date)):
-                        first_row_serializable.append(item.isoformat())
-                    else:
-                        first_row_serializable.append(item)
-                result_data['results_summary']['first_row'] = first_row_serializable
+        print(f"   🔍 Debug: Formatted result_data:")
+        print(f"        - performance_metrics: {result_data['performance_metrics']}")
+        print(f"        - results_summary: {result_data['results_summary']}")
+        print(f"        - data_structure keys: {list(result_data['data_structure'].keys())}")
+        print(f"        - sample_data length: {len(result_data['data_structure']['sample_data'])}")
         
         print(f"   ⏱️  Response time: {execution_time_ms:.2f}ms")
         print(f"   📊 Rows returned: {len(results):,}")
-        print(f"   🗂️  Tables/Collections: {', '.join(affected_tables)}")
+        print(f"   🗂️  Node types: {', '.join(affected_nodes)}")
         
         return result_data
     
-    def _format_error_result(self, query_name, query_data, error_message, database_type):
+    def _format_error_result(self, query_name, query_data, error_message):
         """Format error result in standard format"""
         return {
             'query_info': {
                 'name': query_name,
                 'description': query_data['description'],
                 'dataset_reference': query_data['dataset_reference'],
-                'database': database_type,
-                'sql': query_data.get('sql', query_data.get('cypher', '')),
-                'affected_tables': [],
+                'database': 'neo4j',
+                'cypher': query_data['cypher'],
+                'affected_nodes': [],
                 'execution_timestamp': datetime.now().isoformat(),
                 'execution_order': len(self.execution_order) + 1
             },
@@ -367,30 +466,22 @@ class EnhancedAnalytics:
             'error': {
                 'occurred': True,
                 'message': error_message,
-                'error_type': 'DatabaseError'
+                'error_type': 'CypherError'
             }
         }
     
     def execute_query(self, query_name, query_data):
-        """Execute a query based on its database type and store result"""
-        database_type = query_data.get('database', 'postgresql')
-        
+        """Execute a Cypher query and store result"""
         self.total_queries_executed += 1
         
-        if database_type == 'postgresql':
-            result = self.execute_postgresql_query(query_name, query_data)
-        elif database_type == 'neo4j':
-            result = self.execute_neo4j_query(query_name, query_data)
-        else:
-            print(f"❌ Unknown database type: {database_type}")
-            return False
+        result = self.execute_cypher_query(query_name, query_data)
         
         if result:
             # Store result in memory for comparisons
             self.results[query_name] = result
             self.execution_order.append(query_name)
             
-            # Store result in database
+            # Store result in PostgreSQL database
             self.store_query_result(query_name, result)
             
             # Check if query was successful
@@ -406,12 +497,12 @@ class EnhancedAnalytics:
         self.failed_queries += 1
         return False
     
-    def execute_queries_in_loop(self, query_names=None, database_filter=None, skip_on_error=False):
-        """Execute queries with enhanced database support and storage"""
-        print("🚀 Enhanced Query Execution with Database Storage\n")
+    def execute_queries_in_loop(self, query_names=None, skip_on_error=False):
+        """Execute Cypher queries with PostgreSQL storage"""
+        print("🚀 Neo4j Cypher Query Execution with PostgreSQL Storage\n")
         print("=" * 80)
         
-        # Create analytics run
+        # Create analytics run in PostgreSQL
         if not self.create_analytics_run():
             print("❌ Failed to create analytics run, stopping execution")
             return False
@@ -430,22 +521,15 @@ class EnhancedAnalytics:
             
             queries_to_run = {name: get_query(name) for name in query_names}
         
-        # Filter by database type if specified
-        if database_filter:
-            queries_to_run = {name: query for name, query in queries_to_run.items() 
-                            if query.get('database') == database_filter}
-            print(f"🔍 Filtered to {database_filter} queries only")
-        
-        print(f"📋 Executing {len(queries_to_run)} queries")
+        print(f"📋 Executing {len(queries_to_run)} Cypher queries")
         print(f"📊 Analytics Run ID: {self.analytics_run_id}")
         print(f"⚙️  Skip on error: {'Yes' if skip_on_error else 'No'}")
-        print(f"💾 Storage: Database only (no file export)")
+        print(f"💾 Storage: PostgreSQL Analytics_Query_Results table")
         print("=" * 80)
         
         # Execute individual queries
         for i, (query_name, query_data) in enumerate(queries_to_run.items(), 1):
             print(f"\n[{i}/{len(queries_to_run)}] Processing: {query_name}")
-            print(f"   Database: {query_data.get('database', 'postgresql').upper()}")
             
             success = self.execute_query(query_name, query_data)
             
@@ -460,20 +544,16 @@ class EnhancedAnalytics:
         
         # Execution summary
         print("\n" + "=" * 80)
-        print("📊 ENHANCED EXECUTION SUMMARY")
+        print("📊 CYPHER EXECUTION SUMMARY")
         print("=" * 80)
         print(f"📊 Analytics Run ID: {self.analytics_run_id}")
         print(f"✅ Successful queries: {self.successful_queries}")
         print(f"❌ Failed queries: {self.failed_queries}")
         print(f"📋 Total attempted: {self.total_queries_executed}")
+        print(f"🗄️  Neo4j Cypher queries: {len(self.results)}")
         
-        # Database breakdown
-        pg_queries = len([q for q in self.results.values() if q['query_info']['database'] == 'postgresql'])
-        
-        print(f"🗄️  PostgreSQL queries: {pg_queries}")
-        
-        print(f"\n💾 All results stored in Analytics_Query_Results table")
-        print(f"💡 Use view_analytics_results.py to view stored results")
+        print(f"\n💾 All results stored in PostgreSQL Analytics_Query_Results table")
+        print(f"💡 Results stored with database='neo4j' for identification")
         
         return self.successful_queries > 0
     
@@ -484,7 +564,7 @@ class EnhancedAnalytics:
             return
         
         print("\n" + "=" * 80)
-        print("⚡ QUERY PERFORMANCE SUMMARY")
+        print("⚡ CYPHER QUERY PERFORMANCE SUMMARY")
         print("=" * 80)
         
         performance_data = []
@@ -503,7 +583,7 @@ class EnhancedAnalytics:
                     query_name,
                     f"{response_time:.2f}ms",
                     f"{rows_returned:,}",
-                    result['query_info']['database'].upper()
+                    "Neo4j"
                 ])
         
         headers = ["Query Name", "Response Time", "Rows", "Database"]
@@ -530,53 +610,59 @@ def load_environment():
         'connect_timeout': int(config('DB_CONNECT_TIMEOUT', 10))
     }
     
-    return postgres_config
+    neo4j_config = {
+        'uri': config('NEO4J_URI', 'bolt://localhost:7687'),
+        'user': config('NEO4J_USER', 'neo4j'),
+        'password': config('NEO4J_PASSWORD', 'password')
+    }
+    
+    return postgres_config, neo4j_config
 
 
 def main():
-    """Main execution function with PostgreSQL database support"""
-    print("📊 Enhanced PostgreSQL Analytics with Database Storage")
+    """Main execution function with Neo4j and PostgreSQL support"""
+    print("📊 Neo4j Cypher Analytics with PostgreSQL Storage")
     print("=" * 80)
-    print("🔄 PostgreSQL query execution with database storage")
-    print("💾 All results stored in Analytics_Query_Results table")
+    print("🔄 Neo4j Cypher query execution with PostgreSQL result storage")
+    print("💾 All results stored in PostgreSQL Analytics_Query_Results table")
     
     # Load database configurations
-    postgres_config = load_environment()
+    postgres_config, neo4j_config = load_environment()
     
-    # Initialize enhanced analytics
-    analytics = EnhancedAnalytics(postgres_config)
+    # Initialize Cypher analytics
+    analytics = CypherAnalytics(postgres_config, neo4j_config)
     
     if not analytics.connect_databases():
         print("❌ Failed to connect to required databases")
         return
     
     try:
-        # Execute all PostgreSQL queries with database storage
+        # Execute all Cypher queries with PostgreSQL storage
         success = analytics.execute_queries_in_loop()
         
         # Alternative execution options:
-        # success = analytics.execute_queries_in_loop(database_filter='postgresql')
         # success = analytics.execute_queries_in_loop(
-        #     query_names=["favorite_products", "favorite_categories"]
+        #     query_names=["product_associations"]
         # )
         
         if success:
             # Display performance summary
             analytics.display_performance_summary()
             
-            print("\n🎉 Enhanced analytics completed successfully!")
+            print("\n🎉 Cypher analytics completed successfully!")
             print("📋 Features used:")
-            print("   • PostgreSQL query execution")
-            print("   • Complete database storage in Analytics_Query_Results")
+            print("   • Neo4j Cypher query execution")
+            print("   • Complete PostgreSQL storage in Analytics_Query_Results")
             print("   • Performance analysis and tracking")
-            print("   • No file exports - all data in database")
+            print("   • Graph database analytics with relational storage")
             print(f"\n💾 Analytics Run ID: {analytics.analytics_run_id}")
             print("💡 Query results to view stored data:")
-            print("   • SELECT * FROM Analytics_Runs ORDER BY export_timestamp DESC;")
+            print("   • SELECT * FROM Analytics_Runs WHERE database_name = 'neo4j_graph_db' ORDER BY export_timestamp DESC;")
             print(f"   • SELECT * FROM Analytics_Query_Results WHERE run_id = {analytics.analytics_run_id};")
+            print("   • SELECT * FROM Analytics_Query_Results WHERE query LIKE '%MATCH%' ORDER BY execution_timestamp DESC;")
             
         else:
-            print("\n❌ Analytics execution failed or was incomplete")
+            print("\n❌ Cypher analytics execution failed or was incomplete")
         
     except KeyboardInterrupt:
         print("\n⏹️  Analytics interrupted by user")

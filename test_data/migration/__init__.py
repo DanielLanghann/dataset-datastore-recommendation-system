@@ -1,0 +1,1 @@
+print("Database migration from postgres to neo4j")
