@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 enhanced_perform_queries.py
-Enhanced query performance script with Neo4j support and database comparison
+Enhanced query performance script with database storage
+All results are stored in Analytics_Query_Results table
 """
 
 import psycopg2
@@ -12,27 +13,25 @@ from datetime import datetime, date
 from decimal import Decimal
 from decouple import config
 from tabulate import tabulate
-from neo4j import GraphDatabase
 
 # Import our enhanced queries module
 from queries import (
     get_all_queries, get_query_list, get_query, 
-    get_comparison_query_pairs,
     QUERY_CONFIG
 )
 
 
 class EnhancedAnalytics:
-    def __init__(self, postgres_config, neo4j_config=None):
+    def __init__(self, postgres_config):
         self.postgres_config = postgres_config
-        self.neo4j_config = neo4j_config
         self.pg_connection = None
-        self.neo4j_driver = None
         self.results = {}
         self.execution_order = []
         self.analytics_run_id = None
         self.execution_start_time = datetime.now()
-        self.comparison_results = {}
+        self.total_queries_executed = 0
+        self.successful_queries = 0
+        self.failed_queries = 0
     
     def json_serializer(self, obj):
         """Custom JSON serializer for PostgreSQL and Neo4j data types"""
@@ -49,7 +48,7 @@ class EnhancedAnalytics:
         return json.dumps(obj, default=self.json_serializer)
     
     def connect_databases(self):
-        """Connect to both PostgreSQL and Neo4j"""
+        """Connect to PostgreSQL"""
         success = True
         
         # Connect to PostgreSQL
@@ -60,32 +59,172 @@ class EnhancedAnalytics:
             print(f"❌ PostgreSQL connection failed: {e}")
             success = False
         
-        # Connect to Neo4j (optional)
-        if self.neo4j_config:
-            try:
-                self.neo4j_driver = GraphDatabase.driver(
-                    self.neo4j_config['uri'],
-                    auth=(self.neo4j_config['user'], self.neo4j_config['password'])
-                )
-                
-                # Test Neo4j connection
-                with self.neo4j_driver.session() as session:
-                    result = session.run("RETURN 'Connection successful' as message")
-                    print(f"✅ Connected to Neo4j: {self.neo4j_config['uri']}")
-                    
-            except Exception as e:
-                print(f"⚠️  Neo4j connection failed: {e}")
-                print("   Neo4j queries will be skipped")
-                self.neo4j_driver = None
-        
         return success
     
     def disconnect_databases(self):
         """Close database connections"""
         if self.pg_connection:
             self.pg_connection.close()
-        if self.neo4j_driver:
-            self.neo4j_driver.close()
+    
+    def create_analytics_run(self):
+        """Create a new analytics run record and return its ID"""
+        try:
+            cursor = self.pg_connection.cursor()
+            
+            cursor.execute("""
+                INSERT INTO Analytics_Runs (
+                    export_timestamp, database_host, database_name, 
+                    script_version, description, display_limit, sample_data_limit
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING run_id
+            """, (
+                self.execution_start_time,
+                self.postgres_config['host'],
+                self.postgres_config['database'],
+                '3.0_database_storage',
+                'Enhanced analytics with database storage',
+                QUERY_CONFIG.get('display_limit', 5),
+                QUERY_CONFIG.get('sample_data_limit', 3)
+            ))
+            
+            self.analytics_run_id = cursor.fetchone()[0]
+            self.pg_connection.commit()
+            cursor.close()
+            
+            print(f"📊 Created analytics run with ID: {self.analytics_run_id}")
+            return True
+            
+        except psycopg2.Error as e:
+            print(f"❌ Failed to create analytics run: {e}")
+            self.pg_connection.rollback()
+            return False
+    
+    def update_analytics_run(self):
+        """Update the analytics run with final statistics"""
+        if not self.analytics_run_id:
+            return False
+        
+        try:
+            cursor = self.pg_connection.cursor()
+            
+            execution_end_time = datetime.now()
+            total_execution_time_ms = (execution_end_time - self.execution_start_time).total_seconds() * 1000
+            
+            # Calculate total rows queried
+            total_rows_queried = sum(
+                result['performance_metrics']['rows_returned'] 
+                for result in self.results.values() 
+                if 'error' not in result
+            )
+            
+            # Calculate average response time
+            successful_response_times = [
+                result['performance_metrics']['response_time_ms']
+                for result in self.results.values()
+                if 'error' not in result and result['performance_metrics']['response_time_ms'] > 0
+            ]
+            
+            avg_response_time = (
+                sum(successful_response_times) / len(successful_response_times)
+                if successful_response_times else 0
+            )
+            
+            success_rate = (
+                (self.successful_queries / self.total_queries_executed * 100)
+                if self.total_queries_executed > 0 else 0
+            )
+            
+            cursor.execute("""
+                UPDATE Analytics_Runs SET
+                    total_queries_executed = %s,
+                    successful_queries = %s,
+                    execution_order = %s,
+                    total_execution_time_ms = %s,
+                    total_rows_queried = %s,
+                    average_response_time_ms = %s,
+                    success_rate_percent = %s
+                WHERE run_id = %s
+            """, (
+                self.total_queries_executed,
+                self.successful_queries,
+                self.safe_json_dumps(self.execution_order),
+                round(total_execution_time_ms, 2),
+                total_rows_queried,
+                round(avg_response_time, 2),
+                round(success_rate, 2),
+                self.analytics_run_id
+            ))
+            
+            self.pg_connection.commit()
+            cursor.close()
+            
+            print(f"✅ Updated analytics run {self.analytics_run_id} with final statistics")
+            return True
+            
+        except psycopg2.Error as e:
+            print(f"❌ Failed to update analytics run: {e}")
+            self.pg_connection.rollback()
+            return False
+    
+    def store_query_result(self, query_name, result_data):
+        """Store individual query result in Analytics_Query_Results table"""
+        if not self.analytics_run_id:
+            print("⚠️  No analytics run ID available, cannot store query result")
+            return False
+        
+        try:
+            cursor = self.pg_connection.cursor()
+            
+            query_info = result_data['query_info']
+            performance_metrics = result_data['performance_metrics']
+            data_structure = result_data['data_structure']
+            results_summary = result_data['results_summary']
+            
+            # Handle error cases
+            error_occurred = 'error' in result_data
+            error_message = result_data.get('error', {}).get('message', None) if error_occurred else None
+            
+            cursor.execute("""
+                INSERT INTO Analytics_Query_Results (
+                    run_id, query_name, query_description, dataset_reference,
+                    sql_query, affected_tables, execution_timestamp, execution_order,
+                    response_time_ms, response_time_seconds, rows_returned, columns_returned,
+                    column_names, sample_data, data_types,
+                    has_data, first_row, total_data_points
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+            """, (
+                self.analytics_run_id,
+                query_name,
+                query_info['description'],
+                query_info['dataset_reference'],
+                query_info['sql'],
+                self.safe_json_dumps(query_info['affected_tables']),
+                datetime.fromisoformat(query_info['execution_timestamp'].replace('Z', '+00:00')),
+                query_info['execution_order'],
+                performance_metrics['response_time_ms'],
+                performance_metrics['response_time_seconds'],
+                performance_metrics['rows_returned'],
+                performance_metrics['columns_returned'],
+                self.safe_json_dumps(data_structure['column_names']),
+                self.safe_json_dumps(data_structure['sample_data']),
+                self.safe_json_dumps(data_structure['data_types']),
+                results_summary['has_data'],
+                self.safe_json_dumps(results_summary['first_row']),
+                results_summary['total_data_points']
+            ))
+            
+            self.pg_connection.commit()
+            cursor.close()
+            
+            print(f"   💾 Stored query result in database")
+            return True
+            
+        except psycopg2.Error as e:
+            print(f"   ❌ Failed to store query result: {e}")
+            self.pg_connection.rollback()
+            return False
     
     def extract_tables_from_query(self, query_sql):
         """Extract table names from SQL query using regex"""
@@ -127,45 +266,9 @@ class EnhancedAnalytics:
             return self._format_error_result(query_name, query_data, str(e), 'postgresql')
     
     def execute_neo4j_query(self, query_name, query_data):
-        """Execute a Neo4j query"""
-        if not self.neo4j_driver:
-            print(f"⚠️  Neo4j: {query_name} - Driver not available")
-            return self._format_error_result(query_name, query_data, "Neo4j driver not available", 'neo4j')
-        
-        print(f"🔍 Neo4j: {query_name}")
-        
-        try:
-            with self.neo4j_driver.session() as session:
-                start_time = time.time()
-                
-                # Handle parameterized queries
-                parameters = query_data.get('parameters', {})
-                if 'product_name' in query_data.get('cypher', '') and not parameters:
-                    # Default parameters for recommendation queries
-                    parameters = {'product_name': 'iPhone 15 Pro', 'limit': 10}
-                
-                result = session.run(query_data['cypher'], parameters)
-                records = list(result)
-                end_time = time.time()
-                
-                execution_time_ms = (end_time - start_time) * 1000
-                
-                # Convert Neo4j records to list format
-                if records:
-                    column_names = list(records[0].keys())
-                    results = [list(record.values()) for record in records]
-                else:
-                    column_names = []
-                    results = []
-                
-                return self._format_query_result(
-                    query_name, query_data, results, column_names,
-                    execution_time_ms, ['Neo4j Graph'], 'neo4j'
-                )
-                
-        except Exception as e:
-            print(f"   ❌ Neo4j query failed: {e}")
-            return self._format_error_result(query_name, query_data, str(e), 'neo4j')
+        """Neo4j queries not supported - return error"""
+        print(f"⚠️  Neo4j: {query_name} - Not supported in this version")
+        return self._format_error_result(query_name, query_data, "Neo4j not supported", 'neo4j')
     
     def _format_query_result(self, query_name, query_data, results, column_names, execution_time_ms, affected_tables, database_type):
         """Format query result in standard format"""
@@ -188,7 +291,7 @@ class EnhancedAnalytics:
             },
             'data_structure': {
                 'column_names': column_names,
-                'sample_data': results[:QUERY_CONFIG['sample_data_limit']] if results else [],
+                'sample_data': results[:QUERY_CONFIG.get('sample_data_limit', 3)] if results else [],
                 'data_types': [str(type(col).__name__) if results and col is not None else 'NoneType' 
                              for col in (results[0] if results else [])]
             },
@@ -202,7 +305,7 @@ class EnhancedAnalytics:
         # Convert results to JSON-serializable format
         if results:
             serializable_results = []
-            for row in results[:QUERY_CONFIG['sample_data_limit']]:
+            for row in results[:QUERY_CONFIG.get('sample_data_limit', 3)]:
                 serializable_row = []
                 for item in row:
                     if isinstance(item, Decimal):
@@ -269,8 +372,10 @@ class EnhancedAnalytics:
         }
     
     def execute_query(self, query_name, query_data):
-        """Execute a query based on its database type"""
+        """Execute a query based on its database type and store result"""
         database_type = query_data.get('database', 'postgresql')
+        
+        self.total_queries_executed += 1
         
         if database_type == 'postgresql':
             result = self.execute_postgresql_query(query_name, query_data)
@@ -278,76 +383,38 @@ class EnhancedAnalytics:
             result = self.execute_neo4j_query(query_name, query_data)
         else:
             print(f"❌ Unknown database type: {database_type}")
-            return None
+            return False
         
-        self.results[query_name] = result
-        self.execution_order.append(query_name)
+        if result:
+            # Store result in memory for comparisons
+            self.results[query_name] = result
+            self.execution_order.append(query_name)
+            
+            # Store result in database
+            self.store_query_result(query_name, result)
+            
+            # Check if query was successful
+            if 'error' not in result:
+                self.successful_queries += 1
+                print(f"   ✅ Query completed successfully")
+                return True
+            else:
+                self.failed_queries += 1
+                print(f"   ❌ Query failed")
+                return False
         
-        return result is not None and 'error' not in result
+        self.failed_queries += 1
+        return False
     
-    def run_performance_comparison(self):
-        """Run performance comparison between PostgreSQL and Neo4j"""
-        print("\n" + "=" * 80)
-        print("⚡ DATABASE PERFORMANCE COMPARISON")
+    def execute_queries_in_loop(self, query_names=None, database_filter=None, skip_on_error=False):
+        """Execute queries with enhanced database support and storage"""
+        print("🚀 Enhanced Query Execution with Database Storage\n")
         print("=" * 80)
         
-        comparison_pairs = get_comparison_query_pairs()
-        
-        for comparison in comparison_pairs:
-            print(f"\n🔄 {comparison['comparison_name']}:")
-            print(f"   Description: {comparison['description']}")
-            
-            pg_query_name = comparison['postgresql_query']
-            neo4j_query_name = comparison['neo4j_query']
-            
-            # Execute PostgreSQL query
-            pg_query = get_query(pg_query_name)
-            neo4j_query = get_query(neo4j_query_name)
-            
-            if not pg_query or not neo4j_query:
-                print(f"   ⚠️  Queries not found: {pg_query_name}, {neo4j_query_name}")
-                continue
-            
-            pg_success = self.execute_query(pg_query_name, pg_query)
-            neo4j_success = self.execute_query(neo4j_query_name, neo4j_query)
-            
-            # Compare results
-            if pg_success and neo4j_success:
-                pg_result = self.results[pg_query_name]
-                neo4j_result = self.results[neo4j_query_name]
-                
-                pg_time = pg_result['performance_metrics']['response_time_ms']
-                neo4j_time = neo4j_result['performance_metrics']['response_time_ms']
-                pg_rows = pg_result['performance_metrics']['rows_returned']
-                neo4j_rows = neo4j_result['performance_metrics']['rows_returned']
-                
-                # Calculate performance difference
-                if pg_time > 0 and neo4j_time > 0:
-                    if pg_time > neo4j_time:
-                        speedup = pg_time / neo4j_time
-                        faster_db = "Neo4j"
-                    else:
-                        speedup = neo4j_time / pg_time
-                        faster_db = "PostgreSQL"
-                    
-                    self.comparison_results[comparison['comparison_name']] = {
-                        'postgresql_time_ms': pg_time,
-                        'neo4j_time_ms': neo4j_time,
-                        'postgresql_rows': pg_rows,
-                        'neo4j_rows': neo4j_rows,
-                        'faster_database': faster_db,
-                        'speedup_factor': round(speedup, 2),
-                        'performance_difference_percent': round(((max(pg_time, neo4j_time) - min(pg_time, neo4j_time)) / max(pg_time, neo4j_time)) * 100, 1)
-                    }
-                    
-                    print(f"   📊 PostgreSQL: {pg_time:.2f}ms ({pg_rows:,} rows)")
-                    print(f"   📊 Neo4j: {neo4j_time:.2f}ms ({neo4j_rows:,} rows)")
-                    print(f"   🏆 Faster: {faster_db} ({speedup:.2f}x speedup)")
-    
-    def execute_queries_in_loop(self, query_names=None, database_filter=None, skip_on_error=False, run_comparisons=True):
-        """Execute queries with enhanced database support"""
-        print("🚀 Enhanced Query Execution with Multi-Database Support\n")
-        print("=" * 80)
+        # Create analytics run
+        if not self.create_analytics_run():
+            print("❌ Failed to create analytics run, stopping execution")
+            return False
         
         # Determine which queries to run
         if query_names is None:
@@ -370,103 +437,86 @@ class EnhancedAnalytics:
             print(f"🔍 Filtered to {database_filter} queries only")
         
         print(f"📋 Executing {len(queries_to_run)} queries")
+        print(f"📊 Analytics Run ID: {self.analytics_run_id}")
         print(f"⚙️  Skip on error: {'Yes' if skip_on_error else 'No'}")
-        print(f"🔄 Performance comparisons: {'Yes' if run_comparisons else 'No'}")
+        print(f"💾 Storage: Database only (no file export)")
         print("=" * 80)
         
         # Execute individual queries
-        successful_queries = 0
-        failed_queries = 0
-        
         for i, (query_name, query_data) in enumerate(queries_to_run.items(), 1):
             print(f"\n[{i}/{len(queries_to_run)}] Processing: {query_name}")
             print(f"   Database: {query_data.get('database', 'postgresql').upper()}")
             
             success = self.execute_query(query_name, query_data)
             
-            if success:
-                successful_queries += 1
-                print(f"   ✅ Query completed successfully")
-            else:
-                failed_queries += 1
-                print(f"   ❌ Query failed")
-                
-                if not skip_on_error:
-                    print(f"   🛑 Stopping execution due to error")
-                    break
-                else:
-                    print(f"   ⏭️  Continuing to next query")
+            if not success and not skip_on_error:
+                print(f"   🛑 Stopping execution due to error")
+                break
+            elif not success:
+                print(f"   ⏭️  Continuing to next query")
         
-        # Run performance comparisons if enabled
-        if run_comparisons and self.neo4j_driver:
-            self.run_performance_comparison()
+        # Update analytics run with final statistics
+        self.update_analytics_run()
         
         # Execution summary
         print("\n" + "=" * 80)
         print("📊 ENHANCED EXECUTION SUMMARY")
         print("=" * 80)
-        print(f"✅ Successful queries: {successful_queries}")
-        print(f"❌ Failed queries: {failed_queries}")
-        print(f"📋 Total attempted: {len(self.execution_order)}")
+        print(f"📊 Analytics Run ID: {self.analytics_run_id}")
+        print(f"✅ Successful queries: {self.successful_queries}")
+        print(f"❌ Failed queries: {self.failed_queries}")
+        print(f"📋 Total attempted: {self.total_queries_executed}")
         
         # Database breakdown
         pg_queries = len([q for q in self.results.values() if q['query_info']['database'] == 'postgresql'])
-        neo4j_queries = len([q for q in self.results.values() if q['query_info']['database'] == 'neo4j'])
         
         print(f"🗄️  PostgreSQL queries: {pg_queries}")
-        print(f"🌐 Neo4j queries: {neo4j_queries}")
         
-        # Performance comparison summary
-        if self.comparison_results:
-            print(f"\n🏆 Performance Comparison Results:")
-            for comparison_name, results in self.comparison_results.items():
-                print(f"   {comparison_name}: {results['faster_database']} wins by {results['speedup_factor']}x")
+        print(f"\n💾 All results stored in Analytics_Query_Results table")
+        print(f"💡 Use view_analytics_results.py to view stored results")
         
-        return successful_queries > 0
+        return self.successful_queries > 0
     
-    def display_comparison_summary(self):
-        """Display detailed performance comparison summary"""
-        if not self.comparison_results:
-            print("No performance comparisons available")
+    def display_performance_summary(self):
+        """Display performance summary for executed queries"""
+        if not self.results:
+            print("No query results available for performance summary")
             return
         
         print("\n" + "=" * 80)
-        print("🏆 DETAILED PERFORMANCE COMPARISON SUMMARY")
+        print("⚡ QUERY PERFORMANCE SUMMARY")
         print("=" * 80)
         
-        comparison_data = []
-        total_pg_time = 0
-        total_neo4j_time = 0
+        performance_data = []
+        total_time = 0
+        total_rows = 0
         
-        for comparison_name, results in self.comparison_results.items():
-            pg_time = results['postgresql_time_ms']
-            neo4j_time = results['neo4j_time_ms']
-            faster_db = results['faster_database']
-            speedup = results['speedup_factor']
-            
-            total_pg_time += pg_time
-            total_neo4j_time += neo4j_time
-            
-            comparison_data.append([
-                comparison_name,
-                f"{pg_time:.2f}ms",
-                f"{neo4j_time:.2f}ms",
-                f"{faster_db}",
-                f"{speedup:.2f}x"
-            ])
+        for query_name, result in self.results.items():
+            if 'error' not in result:
+                response_time = result['performance_metrics']['response_time_ms']
+                rows_returned = result['performance_metrics']['rows_returned']
+                
+                total_time += response_time
+                total_rows += rows_returned
+                
+                performance_data.append([
+                    query_name,
+                    f"{response_time:.2f}ms",
+                    f"{rows_returned:,}",
+                    result['query_info']['database'].upper()
+                ])
         
-        headers = ["Comparison", "PostgreSQL", "Neo4j", "Winner", "Speedup"]
-        print(tabulate(comparison_data, headers=headers, tablefmt="grid"))
+        headers = ["Query Name", "Response Time", "Rows", "Database"]
+        print(tabulate(performance_data, headers=headers, tablefmt="grid"))
         
         # Overall summary
-        if total_pg_time > 0 and total_neo4j_time > 0:
-            overall_winner = "Neo4j" if total_neo4j_time < total_pg_time else "PostgreSQL"
-            overall_speedup = max(total_pg_time, total_neo4j_time) / min(total_pg_time, total_neo4j_time)
-            
+        if performance_data:
+            avg_time = total_time / len(performance_data)
             print(f"\n🎯 Overall Performance:")
-            print(f"   Total PostgreSQL time: {total_pg_time:.2f}ms")
-            print(f"   Total Neo4j time: {total_neo4j_time:.2f}ms")
-            print(f"   Overall winner: {overall_winner} ({overall_speedup:.2f}x faster)")
+            print(f"   Total execution time: {total_time:.2f}ms")
+            print(f"   Average query time: {avg_time:.2f}ms")
+            print(f"   Total rows returned: {total_rows:,}")
+            print(f"   Queries executed: {len(performance_data)}")
 
 
 def load_environment():
@@ -480,65 +530,58 @@ def load_environment():
         'connect_timeout': int(config('DB_CONNECT_TIMEOUT', 10))
     }
     
-    neo4j_config = {
-        'uri': config('NEO4J_URI', 'bolt://localhost:7687'),
-        'user': config('NEO4J_USER', 'neo4j'),
-        'password': config('NEO4J_PASSWORD', config('NEO4J_PASSWORD', 'neo4j_root_password'))
-    }
-    
-    return postgres_config, neo4j_config
+    return postgres_config
 
 
 def main():
-    """Main execution function with enhanced database support"""
-    print("📊 Enhanced Multi-Database Analytics & Performance Testing")
+    """Main execution function with PostgreSQL database support"""
+    print("📊 Enhanced PostgreSQL Analytics with Database Storage")
     print("=" * 80)
-    print("🔄 PostgreSQL + Neo4j support with performance comparisons")
+    print("🔄 PostgreSQL query execution with database storage")
+    print("💾 All results stored in Analytics_Query_Results table")
     
     # Load database configurations
-    postgres_config, neo4j_config = load_environment()
+    postgres_config = load_environment()
     
     # Initialize enhanced analytics
-    analytics = EnhancedAnalytics(postgres_config, neo4j_config)
+    analytics = EnhancedAnalytics(postgres_config)
     
     if not analytics.connect_databases():
         print("❌ Failed to connect to required databases")
         return
     
     try:
-        # Example execution options:
+        # Execute all PostgreSQL queries with database storage
+        success = analytics.execute_queries_in_loop()
         
-        # Option 1: Execute ALL queries with comparisons
-        success = analytics.execute_queries_in_loop(run_comparisons=True)
-        
-        # Option 2: Execute only PostgreSQL queries
+        # Alternative execution options:
         # success = analytics.execute_queries_in_loop(database_filter='postgresql')
-        
-        # Option 3: Execute only Neo4j queries
-        # success = analytics.execute_queries_in_loop(database_filter='neo4j')
-        
-        # Option 4: Execute specific queries
         # success = analytics.execute_queries_in_loop(
-        #     query_names=["product_associations_postgresql", "product_associations_neo4j"],
-        #     run_comparisons=True
+        #     query_names=["favorite_products", "favorite_categories"]
         # )
         
         if success:
-            # Display detailed comparison summary
-            analytics.display_comparison_summary()
+            # Display performance summary
+            analytics.display_performance_summary()
             
             print("\n🎉 Enhanced analytics completed successfully!")
             print("📋 Features used:")
-            print("   • Multi-database support (PostgreSQL + Neo4j)")
-            print("   • Performance comparisons between databases")
-            print("   • Graph-based queries for product associations")
-            print("   • Detailed execution metrics and analysis")
+            print("   • PostgreSQL query execution")
+            print("   • Complete database storage in Analytics_Query_Results")
+            print("   • Performance analysis and tracking")
+            print("   • No file exports - all data in database")
+            print(f"\n💾 Analytics Run ID: {analytics.analytics_run_id}")
+            print("💡 Query results to view stored data:")
+            print("   • SELECT * FROM Analytics_Runs ORDER BY export_timestamp DESC;")
+            print(f"   • SELECT * FROM Analytics_Query_Results WHERE run_id = {analytics.analytics_run_id};")
             
         else:
             print("\n❌ Analytics execution failed or was incomplete")
         
     except KeyboardInterrupt:
         print("\n⏹️  Analytics interrupted by user")
+        if analytics.analytics_run_id:
+            print(f"💾 Partial results saved in Analytics Run ID: {analytics.analytics_run_id}")
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
         import traceback

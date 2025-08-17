@@ -97,35 +97,6 @@ def get_schema_sql():
         UNIQUE(product_a_id, product_b_id)
     );
 
-    -- Analytics_Runs table for storing analytics execution metadata
-    CREATE TABLE Analytics_Runs (
-        run_id SERIAL PRIMARY KEY,
-        export_timestamp TIMESTAMP NOT NULL,
-        database_host VARCHAR(255),
-        database_name VARCHAR(255),
-        total_queries_executed INTEGER,
-        successful_queries INTEGER,
-        execution_order TEXT, -- JSON array of query names
-        script_version VARCHAR(50),
-        description TEXT,
-        
-        -- Configuration
-        display_limit INTEGER,
-        sample_data_limit INTEGER,
-        export_filename_template VARCHAR(255),
-        timestamp_format VARCHAR(50),
-        
-        -- Performance Summary
-        total_execution_time_ms DECIMAL(10,2),
-        total_rows_queried INTEGER,
-        average_response_time_ms DECIMAL(10,2),
-        success_rate_percent DECIMAL(5,2),
-        
-        -- Additional metadata
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        analytics_json TEXT -- Store the complete JSON for backup/reference
-    );
-
     -- Analytics_Query_Results table for individual query results
     CREATE TABLE Analytics_Query_Results (
         result_id SERIAL PRIMARY KEY,
